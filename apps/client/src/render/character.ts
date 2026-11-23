@@ -507,8 +507,8 @@ export class CharacterRig {
     let swordRotZ = 0;
     let spearRotX = 0.26;
     let spearY = -0.44;
-    let bowRotX = 0.52;
-    let bowRotZ = 0.22;
+    let bowRotX = -0.32;
+    let bowRotZ = 0.38;
     let bowPull = 0;
     let showArrow = false;
     let shieldRotY = 0.35;
@@ -806,8 +806,8 @@ export class CharacterRig {
       armRZ = 0.75 * c;
       capeLift += 0.35 * c;
     } else if (this.classId === "archer" && p.mode === Mode.Ground && hSpeed < 2) {
-      // Relaxed bow-in-hand ready stance when standing, angled cleanly clear of the ground.
-      armLX = -0.52; armLZ = -0.24; bowRotX = 0.58; bowRotZ = 0.32;
+      // Relaxed bow-in-hand ready stance when standing, tilted diagonally clear of the ground.
+      armLX = -0.68; armLZ = -0.22; bowRotX = -0.35; bowRotZ = 0.42;
     }
 
     // Dodge animation: aerial barrel roll in flight/air, crisp dash tilt on ground.

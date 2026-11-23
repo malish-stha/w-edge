@@ -941,22 +941,35 @@ button:disabled {
 }
 
 .create {
-  max-height: calc(100vh - 32px);
+  max-height: calc(100vh - 24px);
   overflow-y: auto;
-  padding: 18px 20px;
-  gap: 7px;
+  padding: 14px 18px;
+  gap: 5px;
+}
+
+.create fieldset {
+  gap: 4px;
+}
+
+.create legend {
+  margin-bottom: 2px;
 }
 
 .create .choice {
-  padding: 6px 9px;
+  padding: 5px 9px;
+}
+
+.create .swatch-button {
+  width: 26px;
+  height: 26px;
 }
 
 /* Keep the create button reachable on short screens without bleeding text underneath. */
 .create .actions {
   position: sticky;
-  bottom: -18px;
-  margin: 4px -20px -18px;
-  padding: 10px 20px 18px;
+  bottom: -14px;
+  margin: 4px -18px -14px;
+  padding: 10px 18px 14px;
   background: var(--panel-solid);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 2;

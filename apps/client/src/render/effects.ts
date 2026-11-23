@@ -9,7 +9,6 @@ import { CreateTorus } from "@babylonjs/core/Meshes/Builders/torusBuilder.js";
 import { CreateLines } from "@babylonjs/core/Meshes/Builders/linesBuilder.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
-import type { Fx, PingKind } from "@worlds-edge/shared";
 import type { Fx, PingKind, SkillFxKind } from "@worlds-edge/shared";
 import { mat, type FlightFxEvent, type SwingEvent } from "./character.ts";
 
@@ -185,7 +184,6 @@ export class Effects {
       node: rock, from: a, to: b, t: 0,
       life: Math.max(0.14, Math.min(0.45, dist / 55)),
       arc: Math.min(3.5, dist * 0.12), spin: true,
-      onArrive: () => this.ring(to[0], to[1], to[2], r, "titan"),
       onArrive: () => {
         this.ring(to[0], to[1], to[2], r, "titan");
         this.spawnSpikes(to[0], to[1], to[2], Math.min(3.5, r * 0.55), 5, "#ff9b3d", 0.9, 0.55);
@@ -533,45 +531,35 @@ export class Effects {
   }
 
   bolt(pts: number[]) {
-    const path: Vector3[] = [];
     const corePath: Vector3[] = [];
     const outerPath: Vector3[] = [];
     for (let i = 0; i + 5 < pts.length; i += 3) {
       const a = new Vector3(pts[i], pts[i + 1], pts[i + 2]);
       const b = new Vector3(pts[i + 3], pts[i + 4], pts[i + 5]);
-      for (let k = 0; k <= 6; k++) {
-        const p = Vector3.Lerp(a, b, k / 6);
-        if (k > 0 && k < 6) p.addInPlace(new Vector3((Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.8));
-        path.push(p);
-        for (let k = 0; k <= 7; k++) {
-          const p = Vector3.Lerp(a, b, k / 7);
-          const o = p.clone();
-          if (k > 0 && k < 7) {
-            p.addInPlace(new Vector3((Math.random() - 0.5) * 0.75, (Math.random() - 0.5) * 0.75, (Math.random() - 0.5) * 0.75));
-            o.addInPlace(new Vector3((Math.random() - 0.5) * 1.35, (Math.random() - 0.5) * 1.35, (Math.random() - 0.5) * 1.35));
-          }
-          corePath.push(p);
-          outerPath.push(o);
+      for (let k = 0; k <= 7; k++) {
+        const p = Vector3.Lerp(a, b, k / 7);
+        const o = p.clone();
+        if (k > 0 && k < 7) {
+          p.addInPlace(new Vector3((Math.random() - 0.5) * 0.75, (Math.random() - 0.5) * 0.75, (Math.random() - 0.5) * 0.75));
+          o.addInPlace(new Vector3((Math.random() - 0.5) * 1.35, (Math.random() - 0.5) * 1.35, (Math.random() - 0.5) * 1.35));
         }
+        corePath.push(p);
+        outerPath.push(o);
       }
-      if (path.length < 2) return;
-      const mesh = CreateLines("bolt", { points: path }, this.scene);
-      mesh.color = new Color3(0.75, 0.9, 1);
-      mesh.isPickable = false;
-      this.lines.push({ mesh, t: 0, life: 0.35 });
-      if (corePath.length < 2) return;
-      const core = CreateLines("boltCore", { points: corePath }, this.scene);
-      core.color = new Color3(1, 1, 1);
-      core.isPickable = false;
-      this.lines.push({ mesh: core, t: 0, life: 0.42 });
-
-      const outer = CreateLines("boltOuter", { points: outerPath }, this.scene);
-      outer.color = new Color3(0.55, 0.88, 1);
-      outer.isPickable = false;
-      this.lines.push({ mesh: outer, t: 0, life: 0.48 });
     }
+    if (corePath.length < 2) return;
+    const core = CreateLines("boltCore", { points: corePath }, this.scene);
+    core.color = new Color3(1, 1, 1);
+    core.isPickable = false;
+    this.lines.push({ mesh: core, t: 0, life: 0.42 });
 
-    update(dt: number) {
+    const outer = CreateLines("boltOuter", { points: outerPath }, this.scene);
+    outer.color = new Color3(0.55, 0.88, 1);
+    outer.isPickable = false;
+    this.lines.push({ mesh: outer, t: 0, life: 0.48 });
+  }
+
+  update(dt: number) {
       this.rings = this.rings.filter((ring) => {
         ring.t += dt;
         const k = ring.t / ring.life;

@@ -28,9 +28,9 @@ export class FollowCamera {
   }
 
   update(px: number, py: number, pz: number, yaw: number, pitch: number, zoom: number, speed: number, dt: number) {
-    // Follow a point slightly above the head so the center crosshair clears the character's crown.
+    // Follow a point cleanly above the head & feather crest so the center crosshair doesn't occlude them.
     const k = 1 - Math.exp(-18 * dt);
-    const ty = py + 1.98;
+    const ty = py + 2.35;
     this.target.x += (px - this.target.x) * k;
     this.target.y += (ty - this.target.y) * k;
     this.target.z += (pz - this.target.z) * k;

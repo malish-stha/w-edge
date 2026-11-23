@@ -17,7 +17,9 @@ export class Input {
   private attackQueued = false;
   private abilityQueued = false;
   private interactQueued = false;
+  private secondaryQueued = false;
   private mouseDown = false;
+  private secondaryDown = false;
   private listeners = new Map<string, Array<() => void>>();
 
   /** Treat input as captured even without pointer lock (automated tests). */
@@ -32,26 +34,31 @@ export class Input {
       if (e.code === "KeyQ") this.dodgeQueued = true;
       if (e.code === "Digit1") this.abilityQueued = true;
       if (e.code === "KeyE") this.interactQueued = true;
-      // Test mode has no mouse capture: F attacks too.
+      // Test mode has no mouse capture: F attacks, R triggers secondary mechanic.
       if (e.code === "KeyF" && this.forceActive) this.attackQueued = true;
+      if (e.code === "KeyR" && this.forceActive) this.secondaryQueued = true;
       this.keys.add(e.code);
       this.emit(e.code);
       // Keep the page from scrolling or the browser from acting on game keys.
-      if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "Digit1", "ShiftLeft"].includes(e.code)) {
+      if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "KeyR", "KeyK", "Digit1", "ShiftLeft"].includes(e.code)) {
         e.preventDefault();
       }
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
-    window.addEventListener("blur", () => this.keys.clear());
+    window.addEventListener("blur", () => { this.keys.clear(); this.mouseDown = false; this.secondaryDown = false; });
 
     canvas.addEventListener("click", () => this.lock());
-    // Left button attacks (holding it keeps the combo going); only while the mouse is captured.
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Left button attacks (holding it keeps the combo going); right button runs class mechanic / guard.
     canvas.addEventListener("mousedown", (e) => {
-      if (e.button !== 0 || document.pointerLockElement !== this.canvas) return;
-      this.attackQueued = true;
-      this.mouseDown = true;
+      if (document.pointerLockElement !== this.canvas) return;
+      if (e.button === 0) { this.attackQueued = true; this.mouseDown = true; }
+      else if (e.button === 2) { this.secondaryQueued = true; this.secondaryDown = true; }
     });
-    window.addEventListener("mouseup", (e) => { if (e.button === 0) this.mouseDown = false; });
+    window.addEventListener("mouseup", (e) => {
+      if (e.button === 0) this.mouseDown = false;
+      else if (e.button === 2) this.secondaryDown = false;
+    });
     document.addEventListener("mousemove", (e) => {
       if (document.pointerLockElement !== this.canvas) return;
       const sensitivity = 0.0022;
@@ -106,6 +113,8 @@ export class Input {
     if (this.abilityQueued) buttons |= Buttons.Ability1Pressed;
     if (this.interactQueued) buttons |= Buttons.InteractPressed;
     if (this.held("KeyE")) buttons |= Buttons.InteractHeld;
+    if (this.secondaryQueued) buttons |= Buttons.SecondaryPressed;
+    if (this.secondaryDown || (this.forceActive && this.held("KeyR"))) buttons |= Buttons.SecondaryHeld;
     this.clearPresses();
     const moveZ = (this.held("KeyW", "ArrowUp") ? 100 : 0) - (this.held("KeyS", "ArrowDown") ? 100 : 0);
     const moveX = (this.held("KeyD", "ArrowRight") ? 100 : 0) - (this.held("KeyA", "ArrowLeft") ? 100 : 0);
@@ -119,6 +128,7 @@ export class Input {
     this.attackQueued = false;
     this.abilityQueued = false;
     this.interactQueued = false;
+    this.secondaryQueued = false;
   }
 
   private wrappedYaw() {

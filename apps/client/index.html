@@ -35,6 +35,13 @@
         <div class="vital-row"><span>HP</span><div class="bar hp"><div id="hp-fill"></div></div><span id="hp-text">100</span></div>
         <div class="vital-row"><span id="level">Lv 1</span><div class="bar xp"><div id="xp-fill"></div></div><span id="xp-text">0 XP</span></div>
       </div>
+      <div id="class-skill" class="ability class-skill">
+        <kbd id="class-key">RMB</kbd>
+        <span id="class-name">Class skill</span>
+        <span id="class-state">Ready</span>
+        <span id="tech-label" class="tech-sub">[K] Technique</span>
+        <div id="class-cd"></div>
+      </div>
       <div id="ability" class="ability locked">
         <kbd>1</kbd>
         <span id="ability-name">Mantle skill</span>
@@ -60,7 +67,8 @@
           <dt>Shift</dt><dd>Run · boost · look down to dive</dd>
           <dt>Q</dt><dd>Dodge</dd>
           <dt>Left mouse</dt><dd>Attack (hold to combo)</dd>
-          <dt>1</dt><dd>Mantle skill</dd>
+          <dt>Right mouse</dt><dd>Class mechanic · guard / parry / plant arrow</dd>
+          <dt>1 · K</dt><dd>Mantle skill · Signature technique</dd>
           <dt>E</dt><dd>Interact · hold to revive</dd>
           <dt>P</dt><dd>Party</dd>
           <dt>Y · N</dt><dd>Accept · decline</dd>
@@ -76,6 +84,7 @@
         <h2>Menu</h2>
         <div class="stack">
           <button id="menu-resume" class="primary">Resume</button>
+          <button id="menu-tech" class="secondary">Signature technique (K)</button>
           <button id="menu-party" class="secondary">Party</button>
           <button id="menu-dungeon" class="secondary" hidden>Leave the dungeon</button>
           <button id="menu-characters" class="secondary">Change character</button>
@@ -94,6 +103,17 @@
         <div class="actions">
           <button id="party-leave" class="secondary">Leave party</button>
           <button id="party-close" class="primary">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="tech-panel" class="screen" hidden>
+      <div class="card">
+        <h2>Signature technique</h2>
+        <p id="tech-intro" class="muted"></p>
+        <ul id="tech-list" class="characters"></ul>
+        <div class="actions">
+          <button id="tech-close" class="primary">Close</button>
         </div>
       </div>
     </div>

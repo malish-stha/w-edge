@@ -4,7 +4,7 @@ import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import {
-  BossPhase, COLOSSUS, MANTLES, Mode, SHRINE, getWorld, randomDraft,
+  BossPhase, COLOSSUS, MANTLES, Mode, SHRINE, defaultTechniqueFor, getWorld, randomDraft, techniqueDisplay, techniquesForClass,
   type CharacterDraft, type CharacterSummary, type Fx, type World,
 } from "@worlds-edge/shared";
 import { ColossusRig } from "./render/colossus.ts";
@@ -124,6 +124,7 @@ let roster: Roster | null = null;
 let pendingInvite: string | null = null;
 let pendingReady: string | null = null;
 let partyPanelOpen = false;
+let techPanelOpen = false;
 
 function clearRigs() {
   for (const rig of rigs.values()) rig.dispose();
@@ -160,6 +161,21 @@ function handleFx(list: Fx[]) {
         else { const p = playerPos.get(f.id); if (p) hud.popup(p.x, p.y + 2.4, p.z, "Level up!", "xp"); }
         break;
       case "down": break;
+      case "parry": {
+        const p = playerPos.get(f.id);
+        if (p) hud.popup(p.x, p.y + 2.2, p.z, f.stored > 1 ? `STORED ×${f.stored}` : "PARRY!", "weak");
+        break;
+      }
+      case "pin": effects.pin(f.x, f.y, f.z, f.kind); break;
+      case "crossfire": effects.crossfire(f.pts, f.mantle); break;
+      case "breakwater":
+        effects.ring(f.x, f.y, f.z, f.r, f.mantle === "tide" ? "tide" : f.mantle === "titan" ? "titan" : "impact");
+        break;
+      case "vault": {
+        const p = playerPos.get(f.id);
+        if (p) hud.popup(p.x, p.y + 2.2, p.z, "VAULT!", "xp");
+        break;
+      }
     }
   }
 }
@@ -346,6 +362,7 @@ async function leaveWorld() {
   phase = "title";
   menu.hidden = true;
   closePartyPanel(false);
+  closeTechPanel(false);
   hud.hide();
   const s = session;
   session = null;
@@ -407,9 +424,65 @@ function renderPartyPanel() {
   }
 }
 
+const techPanel = document.getElementById("tech-panel") as HTMLDivElement;
+
+function renderTechPanel() {
+  const self = session?.self();
+  if (!self) return;
+  const list = document.getElementById("tech-list")!;
+  const intro = document.getElementById("tech-intro")!;
+  intro.textContent = `Choose a signature technique for your ${self.classId} (${MANTLES.find((m) => m.id === self.mantle)?.name ?? self.mantle} mantle).`;
+  const options = techniquesForClass(self.classId);
+  list.replaceChildren(...options.map((t) => {
+    const li = document.createElement("li");
+    li.className = "character";
+    const { title } = techniqueDisplay(t.id, self.classId, self.mantle);
+    const active = self.technique === t.id;
+    li.innerHTML = `<span class="who"><strong></strong><small></small></span>`;
+    li.querySelector("strong")!.textContent = title;
+    li.querySelector("small")!.textContent = `${t.effect} Rewards: ${t.rewards}`;
+    const btn = document.createElement("button");
+    btn.className = active ? "primary" : "secondary";
+    btn.textContent = active ? "Equipped" : "Equip";
+    btn.disabled = active || !(session instanceof OnlineSession);
+    btn.onclick = () => {
+      if (session instanceof OnlineSession) {
+        session.send("technique:set", { id: t.id });
+        hud.notice(`Equipped ${title}.`);
+        closeTechPanel();
+      }
+    };
+    li.append(btn);
+    return li;
+  }));
+}
+
+function openTechPanel() {
+  if (phase !== "playing") return;
+  techPanelOpen = true;
+  partyPanelOpen = false;
+  partyPanel.hidden = true;
+  menu.hidden = true;
+  renderTechPanel();
+  techPanel.hidden = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function closeTechPanel(relock = true) {
+  techPanelOpen = false;
+  techPanel.hidden = true;
+  if (relock && phase === "playing") { input.lock(); canvas.focus(); }
+}
+
+input.on("KeyK", () => (techPanelOpen ? closeTechPanel() : openTechPanel()));
+document.getElementById("tech-close")!.addEventListener("click", () => closeTechPanel());
+document.getElementById("menu-tech")!.addEventListener("click", () => openTechPanel());
+
 function openPartyPanel() {
   if (phase !== "playing") return;
   partyPanelOpen = true;
+  techPanelOpen = false;
+  techPanel.hidden = true;
   menu.hidden = true;
   renderPartyPanel();
   partyPanel.hidden = false;
@@ -454,7 +527,7 @@ async function signOut() {
 // In-game menu: appears whenever the mouse is released (Esc).
 document.addEventListener("pointerlockchange", () => {
   if (phase !== "playing") return;
-  menu.hidden = input.locked || partyPanelOpen;
+  menu.hidden = input.locked || partyPanelOpen || techPanelOpen;
   (document.getElementById("menu-dungeon") as HTMLButtonElement).hidden = !(session instanceof OnlineSession && session.place === "colossus");
 });
 document.getElementById("menu-resume")!.addEventListener("click", () => { input.lock(); canvas.focus(); });
@@ -589,6 +662,7 @@ function framePreview(now: number, dt: number) {
     vx: flying ? Math.sin(facing) * 9 : 0, vy: 0, vz: flying ? Math.cos(facing) * 9 : 0,
     facing, mode: flying ? Mode.Flight : Mode.Ground, stamina: 100, exhausted: 0,
     mantle: "", attackTime: 0, attackCombo: 0, downTime: 0, hp: 1, maxHp: 1, level: 1, xp: 0, mantleAwakened: false, abilityCooldown: 0,
+    technique: defaultTechniqueFor(p.look.classId), guarding: false, classCharge: 0, classCooldown: 0,
     party: "", reviveProgress: 0,
   };
   p.rig.update(view, dt, world);

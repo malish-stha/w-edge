@@ -5,7 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { CharacterDraft, CharacterSummary } from "@worlds-edge/shared";
+import { defaultMantlePathFor, defaultTechniqueFor, type CharacterDraft, type CharacterSummary } from "@worlds-edge/shared";
 
 export interface Sql {
   query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]>;
@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS characters (
 );
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS mantle_awakened BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS colossus_clears INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS technique TEXT NOT NULL DEFAULT '';
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS mantle_path TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS dungeon_clears (
   run_id TEXT NOT NULL,
   character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
@@ -110,6 +112,8 @@ interface CharacterRow {
   level: number;
   xp: number;
   mantle_awakened: boolean;
+  technique: string;
+  mantle_path: string;
   pos_x: number | null;
   pos_y: number | null;
   pos_z: number | null;
@@ -128,20 +132,26 @@ export interface Progress {
   xp: number;
   level: number;
   mantleAwakened: boolean;
+  technique: string;
+  mantlePath: string;
 }
 
 function toCharacter(r: CharacterRow): StoredCharacter {
+  const classId = r.class_id as StoredCharacter["classId"];
+  const mantle = r.mantle as StoredCharacter["mantle"];
   return {
     id: r.id,
     accountId: r.account_id,
     name: r.name,
     origin: r.origin as StoredCharacter["origin"],
-    classId: r.class_id as StoredCharacter["classId"],
-    mantle: r.mantle as StoredCharacter["mantle"],
+    classId,
+    mantle,
     appearance: typeof r.appearance === "string" ? JSON.parse(r.appearance) : r.appearance,
     level: r.level,
     xp: r.xp,
     mantleAwakened: r.mantle_awakened,
+    technique: r.technique || defaultTechniqueFor(classId),
+    mantlePath: r.mantle_path || defaultMantlePathFor(mantle),
     updatedAt: new Date(r.updated_at).toISOString(),
     position: r.pos_x === null || r.pos_y === null || r.pos_z === null ? null : { x: r.pos_x, y: r.pos_y, z: r.pos_z },
   };
@@ -178,9 +188,9 @@ export class Store {
   async createCharacter(accountId: number, d: CharacterDraft): Promise<StoredCharacter> {
     try {
       const rows = await this.sql.query<CharacterRow>(
-        `INSERT INTO characters (account_id, name, origin, class_id, mantle, appearance)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb) RETURNING *`,
-        [accountId, d.name, d.origin, d.classId, d.mantle, JSON.stringify(d.appearance)],
+        `INSERT INTO characters (account_id, name, origin, class_id, mantle, appearance, technique, mantle_path)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8) RETURNING *`,
+        [accountId, d.name, d.origin, d.classId, d.mantle, JSON.stringify(d.appearance), defaultTechniqueFor(d.classId), defaultMantlePathFor(d.mantle)],
       );
       return toCharacter(rows[0]);
     } catch (err) {
@@ -222,9 +232,9 @@ export class Store {
 
   async saveProgress(id: number, p: Progress): Promise<void> {
     await this.sql.query(
-      `UPDATE characters SET pos_x = $2, pos_y = $3, pos_z = $4, xp = $5, level = $6, mantle_awakened = $7, updated_at = now()
+      `UPDATE characters SET pos_x = $2, pos_y = $3, pos_z = $4, xp = $5, level = $6, mantle_awakened = $7, technique = $8, mantle_path = $9, updated_at = now()
        WHERE id = $1`,
-      [id, p.x, p.y, p.z, p.xp, p.level, p.mantleAwakened],
+      [id, p.x, p.y, p.z, p.xp, p.level, p.mantleAwakened, p.technique, p.mantlePath],
     );
   }
 }

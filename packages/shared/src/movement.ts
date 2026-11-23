@@ -24,6 +24,16 @@ export const Buttons = {
   InteractPressed: 128,
   /** E held down (reviving a teammate). */
   InteractHeld: 256,
+  /** Right mouse button tapped/pressed (class signature mechanic / guard stance). */
+  SecondaryPressed: 512,
+  /** Right mouse button held (Vanguard guard stance / Breakwater). */
+  SecondaryHeld: 1024,
+  /** Key 2: second mantle skill. */
+  Ability2Pressed: 2048,
+  /** Key 3: mantle exploration ability. */
+  Ability3Pressed: 4096,
+  /** Key 4: mantle ultimate (requires 100% ultimate charge). */
+  Ability4Pressed: 8192,
 } as const;
 
 /** What happened during one step that the server must resolve (hits, skills, interactions). */
@@ -31,7 +41,12 @@ export interface StepEvents {
   /** 1–3 when a basic attack started this step (position in the combo), else 0. */
   attack: number;
   ability1: boolean;
+  ability2: boolean;
+  ability3: boolean;
+  ability4: boolean;
   interact: boolean;
+  secondary: boolean;
+  secondaryHeld: boolean;
   /** Speed of a dive or fast flight that slammed into the ground this step, else 0. */
   impactSpeed: number;
   /** 0 (flat) to 1 (vertical) for that impact. */
@@ -39,11 +54,11 @@ export interface StepEvents {
 }
 
 export function createStepEvents(): StepEvents {
-  return { attack: 0, ability1: false, interact: false, impactSpeed: 0, impactSteep: 0 };
+  return { attack: 0, ability1: false, ability2: false, ability3: false, ability4: false, interact: false, secondary: false, secondaryHeld: false, impactSpeed: 0, impactSteep: 0 };
 }
 
 function clearEvents(e: StepEvents) {
-  e.attack = 0; e.ability1 = false; e.interact = false; e.impactSpeed = 0; e.impactSteep = 0;
+  e.attack = 0; e.ability1 = false; e.ability2 = false; e.ability3 = false; e.ability4 = false; e.interact = false; e.secondary = false; e.secondaryHeld = false; e.impactSpeed = 0; e.impactSteep = 0;
 }
 
 /** Shared scratch for callers that don't care about events (client prediction). */
@@ -278,7 +293,12 @@ export function stepMovement(s: MoveState, input: MoveInput, dt: number, world: 
     events.attack = s.attackCombo;
   }
   if ((b & Buttons.Ability1Pressed) !== 0) events.ability1 = true;
+  if ((b & Buttons.Ability2Pressed) !== 0) events.ability2 = true;
+  if ((b & Buttons.Ability3Pressed) !== 0) events.ability3 = true;
+  if ((b & Buttons.Ability4Pressed) !== 0) events.ability4 = true;
   if ((b & Buttons.InteractPressed) !== 0) events.interact = true;
+  if ((b & Buttons.SecondaryPressed) !== 0) events.secondary = true;
+  if ((b & Buttons.SecondaryHeld) !== 0) events.secondaryHeld = true;
 
   const canBoost = boostHeld && s.exhausted === 0 && s.stamina > 0;
 

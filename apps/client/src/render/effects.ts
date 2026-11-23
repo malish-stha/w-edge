@@ -1,6 +1,7 @@
 import type { Scene } from "@babylonjs/core/scene.js";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh.js";
+import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder.js";
 import { CreateTorus } from "@babylonjs/core/Meshes/Builders/torusBuilder.js";
 import { CreateLines } from "@babylonjs/core/Meshes/Builders/linesBuilder.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
@@ -12,9 +13,13 @@ type RingKind = Extract<Fx, { t: "ring" }>["kind"];
 const RING_COLORS: Record<RingKind, string> = {
   impact: "#ffffff", tide: "#5cc8ff", titan: "#ff9b3d", shrine: "#ffd36b", telegraph: "#ff5a4a", revive: "#9fe8a8",
 };
+const MANTLE_HEX: Record<string, string> = {
+  storm: "#9fe4ff", tide: "#5cc8ff", titan: "#ffb347",
+};
 
 interface Ring { mesh: Mesh; t: number; life: number; r: number; inward: boolean }
 interface Line { mesh: LinesMesh; t: number; life: number }
+interface Marker { mesh: Mesh; t: number; life: number }
 
 /**
  * World-space effects. Allied effects are short and translucent; enemy
@@ -24,6 +29,7 @@ interface Line { mesh: LinesMesh; t: number; life: number }
 export class Effects {
   private rings: Ring[] = [];
   private lines: Line[] = [];
+  private markers: Marker[] = [];
 
   constructor(private scene: Scene) {}
 
@@ -35,6 +41,30 @@ export class Effects {
     const inward = kind === "telegraph";
     const life = inward ? 0.7 : kind === "shrine" ? 1.4 : 0.55;
     this.rings.push({ mesh, t: 0, life, r, inward });
+  }
+
+  pin(x: number, y: number, z: number, kind: "arrow" | "shield") {
+    const mesh = kind === "arrow"
+      ? CreateBox("pinArrow", { width: 0.16, height: 1.0, depth: 0.16 }, this.scene)
+      : CreateBox("pinShield", { width: 1.6, height: 1.4, depth: 0.16 }, this.scene);
+    mesh.material = mat(this.scene, kind === "arrow" ? "#ffd36b" : "#7fe8ff", { glow: 0.9, alpha: kind === "shield" ? 0.55 : 1 });
+    mesh.position.set(x, y, z);
+    mesh.isPickable = false;
+    this.markers.push({ mesh, t: 0, life: kind === "arrow" ? 18 : 2.5 });
+  }
+
+  crossfire(pts: number[], mantle: string) {
+    const hex = MANTLE_HEX[mantle] ?? "#ffd36b";
+    const color = Color3.FromHexString(hex);
+    for (let i = 0; i + 5 < pts.length; i += 6) {
+      const a = new Vector3(pts[i], pts[i + 1], pts[i + 2]);
+      const b = new Vector3(pts[i + 3], pts[i + 4], pts[i + 5]);
+      const mesh = CreateLines("crossfire", { points: [a, b] }, this.scene);
+      mesh.color = color;
+      mesh.isPickable = false;
+      this.lines.push({ mesh, t: 0, life: 0.45 });
+    }
+    for (const m of this.markers) m.t = Math.max(m.t, m.life - 0.1);
   }
 
   shot(from: [number, number, number], to: [number, number, number]) {
@@ -79,12 +109,20 @@ export class Effects {
       line.mesh.alpha = 1 - line.t / line.life;
       return true;
     });
+    this.markers = this.markers.filter((m) => {
+      m.t += dt;
+      if (m.t >= m.life) { m.mesh.dispose(); return false; }
+      m.mesh.rotation.y += dt * 2.5;
+      return true;
+    });
   }
 
   clear() {
     for (const r of this.rings) r.mesh.dispose();
     for (const l of this.lines) l.mesh.dispose();
+    for (const m of this.markers) m.mesh.dispose();
     this.rings = [];
     this.lines = [];
+    this.markers = [];
   }
 }

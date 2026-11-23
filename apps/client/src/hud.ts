@@ -1,5 +1,5 @@
 import {
-  BossPhase, ENEMY_KINDS, ENEMY_SIZE, EnemyState, LEVEL_XP, MANTLE_SKILLS, MAX_LEVEL, Mode, RIM_Z, STAMINA_MAX, levelProgress,
+  BossPhase, CLASS_MECHANICS, ENEMY_KINDS, ENEMY_SIZE, EnemyState, LEVEL_XP, MANTLE_SKILLS, MAX_LEVEL, Mode, RIM_Z, STAMINA_MAX, levelProgress, techniqueDisplay,
 } from "@worlds-edge/shared";
 import type { BossView, EnemyView, PlayerView, Roster } from "./session.ts";
 
@@ -37,6 +37,11 @@ export class Hud {
   private abilityName = $("ability-name");
   private abilityState = $("ability-state");
   private abilityCd = $("ability-cd");
+  private classKey = $("class-key");
+  private className = $("class-name");
+  private classState = $("class-state");
+  private techLabel = $("tech-label");
+  private classCd = $("class-cd");
   private prompt = $("prompt");
   private downed = $("downed");
   private vignette = $("vignette");
@@ -108,6 +113,19 @@ export class Hud {
       : self.abilityCooldown >= 0.05 ? `${self.abilityCooldown.toFixed(1)} s` : "Ready";
     this.abilityCd.style.width = locked || !skill ? "0" : `${(1 - self.abilityCooldown / skill.cooldown) * 100}%`;
 
+    // Class signature mechanic & technique slot.
+    const mech = CLASS_MECHANICS[self.classId];
+    this.classKey.textContent = mech?.control ?? "RMB";
+    this.className.textContent = mech?.name ?? "Class skill";
+    let cState = "Ready";
+    if (!online) cState = "Needs a server";
+    else if (self.guarding) cState = self.classId === "saber" ? "Parrying…" : "Guarding…";
+    else if (self.classCharge > 0) cState = self.classId === "archer" ? `${self.classCharge} planted` : `${self.classCharge} stored`;
+    else if (self.classCooldown >= 0.05) cState = `${self.classCooldown.toFixed(1)} s`;
+    this.classState.textContent = cState;
+    this.classCd.style.width = self.classCooldown > 0 ? `${Math.max(0, 1 - self.classCooldown / 2) * 100}%` : "100%";
+    const { title } = techniqueDisplay(self.technique, self.classId, self.mantle);
+    this.techLabel.textContent = `[K] ${title}`;
   }
 
   /** The context prompt near the middle of the screen (key + text), or null to hide it. */

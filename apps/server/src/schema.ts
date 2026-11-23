@@ -38,6 +38,15 @@ export const Player = schema({
   xp: t.uint16(),
   mantleAwakened: t.uint8(),
   abilityCooldown: t.float32(),
+  ability2Cooldown: t.float32(),
+  exploreCooldown: t.float32(),
+  ultCharge: t.float32(),
+  giant: t.uint8(),
+  technique: t.string(),
+  mantlePath: t.string(),
+  guarding: t.uint8(),
+  classCharge: t.uint8(),
+  classCooldown: t.float32(),
   /** Party id ("" when solo). */
   party: t.string(),
   /** 0..1 while a teammate is reviving this (downed) player. */

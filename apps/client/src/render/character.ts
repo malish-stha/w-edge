@@ -287,6 +287,9 @@ export class CharacterRig {
         case "vanguard": armLX = -1.5; armLZ = 0.3; break; // shield bash
         case "archer": armRX = -1.55; armLX = -1.45; armLZ = 0.35; break; // draw and loose
       }
+    } else if (p.guarding && p.downTime <= 0) {
+      if (this.classId === "vanguard") { armLX = -1.35; armLZ = 0.75; } // shield raised forward
+      else if (this.classId === "saber") { armRX = -1.4; armRZ = -0.6; } // parry stance
     }
     // Downed: lying on the ground.
     if (p.downTime > 0) {

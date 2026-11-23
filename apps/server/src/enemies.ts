@@ -7,14 +7,14 @@
  * Training dummy: takes hits in the training yard and resets.
  */
 import {
-  ENEMY_KINDS, ENEMY_SIZE, EnemyState, type Fx, type World,
+  ENEMY_KINDS, ENEMY_SIZE, EnemyState, ISLES, MONSTER_MODELS, SEA_LEVEL, type Fx, type World,
   groundHeightAt,
 } from "@worlds-edge/shared";
 import { Enemy, type Player, type WorldState } from "./schema.ts";
 
 export interface Spawn { kind: string; x: number; z: number; leash: number; y?: number }
 
-/** Overworld spawns. Island tops: first island (160,-300); western isle (-120,-380). */
+/** Overworld spawns: training dummies, starter wretches/hullbreaker, plus every monster from the packs. */
 export const WORLD_SPAWNS: Spawn[] = [
   { kind: "dummy", x: -66, z: 38, leash: 0 },
   { kind: "dummy", x: -54, z: 40, leash: 0 },
@@ -26,6 +26,48 @@ export const WORLD_SPAWNS: Spawn[] = [
   { kind: "wretch", x: -132, z: -372, leash: 14 },
   { kind: "wretch", x: -108, z: -390, leash: 14 },
 ];
+
+// Distribute every remaining monster from MONSTER_MODELS across the Broken Isles, skies, and sea.
+{
+  const groundKinds: string[] = [];
+  const flyerKinds: string[] = [];
+  const seaKinds: string[] = [];
+  for (const id of Object.keys(MONSTER_MODELS)) {
+    if (id === "glub" || id === "ember-golem") continue; // used for wretch & hullbreaker
+    const ai = ENEMY_KINDS[id]?.ai;
+    if (ai === "flyer") flyerKinds.push(id);
+    else if (ai === "sea") seaKinds.push(id);
+    else groundKinds.push(id);
+  }
+  groundKinds.forEach((kind, i) => {
+    const isle = ISLES[i % ISLES.length];
+    const slot = Math.floor(i / ISLES.length);
+    const angle = slot * 2.39996 + (i % ISLES.length);
+    const r = Math.min(isle.size * 0.3, 5 + slot * 3.2);
+    WORLD_SPAWNS.push({
+      kind,
+      x: Math.round(isle.x + Math.cos(angle) * r),
+      z: Math.round(isle.z + Math.sin(angle) * r),
+      leash: Math.round(isle.size * 0.35),
+    });
+  });
+  flyerKinds.forEach((kind, i) => {
+    const isle = ISLES[i % ISLES.length];
+    const angle = i * 1.9;
+    WORLD_SPAWNS.push({
+      kind,
+      x: Math.round(isle.x + Math.cos(angle) * (isle.size * 0.45 + 8)),
+      z: Math.round(isle.z + Math.sin(angle) * (isle.size * 0.45 + 8)),
+      y: isle.top + 8 + (i % 3) * 4,
+      leash: 28,
+    });
+  });
+  seaKinds.forEach((kind, i) => {
+    const z = -220 - i * 95;
+    const x = (i % 2 === 0 ? 1 : -1) * (45 + (i % 4) * 35);
+    WORLD_SPAWNS.push({ kind, x, z, y: SEA_LEVEL - 0.3, leash: 35 });
+  });
+}
 
 interface Brain {
   id: string;
@@ -60,6 +102,8 @@ export interface Host {
 export interface HitOptions {
   /** Heavy hits (dive impacts) crack shields: full guard damage from the front. */
   heavy?: boolean;
+  /** Treat as a weak-point strike (e.g. Crossfire from two angles / Return Stroke). */
+  weak?: boolean;
 }
 
 export interface HitResult { dealt: number; killed: boolean; blocked: boolean; weak: boolean }
@@ -164,6 +208,11 @@ export class Enemies {
         guard *= 2;
       }
     }
+    if (opts.weak && !res.blocked) {
+      res.weak = true;
+      health *= 1.5;
+      guard *= 1.35;
+    }
     if (e.state === EnemyState.Stagger) health *= 1.5;
 
     e.guard = Math.max(0, e.guard - guard);
@@ -246,19 +295,21 @@ export class Enemies {
         return;
       }
       const [sid, p] = target;
-      if (e.kind === "wretch") this.wretch(e, b, sid, p, dt);
-      else this.hullbreaker(e, b, sid, p, dt);
+      const ai = ENEMY_KINDS[e.kind]?.ai ?? "wretch";
+      if (ai === "hullbreaker") this.hullbreaker(e, b, sid, p, dt);
+      else this.wretch(e, b, sid, p, dt);
     });
   }
 
   private pickTarget(e: Enemy, b: Brain): [string, Player] | null {
     const k = ENEMY_KINDS[e.kind];
+    const maxDy = k.ai === "flyer" ? 18 : 7;
     let best: [string, Player] | null = null;
     let bestD = Infinity;
     this.host.state.players.forEach((p, sid) => {
       if (p.downTime > 0 || p.away) return;
       const dy = p.y - e.y;
-      if (dy < -3 || dy > 7) return; // high fliers are out of reach
+      if (dy < -5 || dy > maxDy) return; // high fliers are out of reach
       const fromHome = Math.hypot(p.x - b.spawn.x, p.z - b.spawn.z);
       if (fromHome > b.spawn.leash + 10) return;
       const d = Math.hypot(p.x - e.x, p.z - e.z);
@@ -292,7 +343,7 @@ export class Enemies {
           this.host.fx({ t: "ring", x: r1(e.x), y: r1(e.y), z: r1(e.z), r: 2.5, kind: "telegraph" });
         } else {
           e.state = EnemyState.Chase;
-          if (d > 1.6) this.step(e, b, p.x, p.z, ENEMY_KINDS.wretch.speed, dt);
+          if (d > 1.6) this.step(e, b, p.x, p.z, ENEMY_KINDS[e.kind].speed, dt);
         }
     }
   }
@@ -335,7 +386,7 @@ export class Enemies {
           e.state = EnemyState.Telegraph; b.t = 0;
           this.host.fx({ t: "ring", x: r1(e.x), y: r1(e.y), z: r1(e.z), r: 3.5, kind: "telegraph" });
         } else if (d > 3) {
-          this.step(e, b, p.x, p.z, ENEMY_KINDS.hullbreaker.speed, dt);
+          this.step(e, b, p.x, p.z, ENEMY_KINDS[e.kind].speed, dt);
         }
     }
   }
@@ -352,6 +403,11 @@ export class Enemies {
   private moveTo(e: Enemy, b: Brain, nx: number, nz: number) {
     const fromHome = Math.hypot(nx - b.spawn.x, nz - b.spawn.z);
     if (fromHome > b.spawn.leash) return;
+    const ai = ENEMY_KINDS[e.kind]?.ai;
+    if (ai === "flyer" || ai === "sea") {
+      e.x = nx; e.z = nz; e.y = b.homeY;
+      return;
+    }
     const ground = groundHeightAt(this.host.world, nx, nz, e.y + 1.5);
     if (!Number.isFinite(ground) || Math.abs(ground - b.homeY) > 3) return; // edge of the island
     e.x = nx; e.z = nz; e.y = ground;

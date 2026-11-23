@@ -41,7 +41,7 @@ function rateLimit(perMinute: number) {
 }
 
 function publicCharacter(c: StoredCharacter): CharacterSummary {
-  return { id: c.id, name: c.name, origin: c.origin, classId: c.classId, mantle: c.mantle, appearance: c.appearance, level: c.level, updatedAt: c.updatedAt };
+  return { id: c.id, name: c.name, origin: c.origin, classId: c.classId, mantle: c.mantle, appearance: c.appearance, level: c.level, technique: c.technique, mantlePath: c.mantlePath, updatedAt: c.updatedAt };
 }
 
 type Authed = Request & { accountId: number };

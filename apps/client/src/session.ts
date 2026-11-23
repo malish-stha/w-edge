@@ -2,7 +2,7 @@ import { Callbacks, Client, Predict, type Room } from "@colyseus/sdk";
 import type { CharacterLook } from "./render/character.ts";
 import {
   PLAYER_MAX_HP, ROOM_WORLD, STEP_SECONDS,
-  createMoveState, getColossusArena, getWorld, stepMovement,
+  createMoveState, defaultTechniqueFor, getColossusArena, getWorld, stepMovement,
   type Fx, type MoveInput, type MoveState, type World,
 } from "@worlds-edge/shared";
 
@@ -29,6 +29,10 @@ export interface PlayerView extends CharacterLook {
   xp: number;
   mantleAwakened: boolean;
   abilityCooldown: number;
+  technique: string;
+  guarding: boolean;
+  classCharge: number;
+  classCooldown: number;
   party: string;
   reviveProgress: number;
 }
@@ -137,6 +141,7 @@ export class OfflineSession implements Session {
       facing: s.facing, mode: s.mode, stamina: s.stamina, exhausted: s.exhausted,
       attackTime: s.attackTime, attackCombo: s.attackCombo, downTime: 0,
       hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, level: 1, xp: 0, mantleAwakened: false, abilityCooldown: 0,
+      technique: defaultTechniqueFor(this.look.classId), guarding: false, classCharge: 0, classCooldown: 0,
       party: "", reviveProgress: 0,
     };
   }
@@ -264,7 +269,12 @@ export class OnlineSession implements Session {
       facing: logic.facing, mode: logic.mode, stamina: logic.stamina, exhausted: logic.exhausted,
       attackTime: logic.attackTime, attackCombo: logic.attackCombo, downTime: logic.downTime,
       hp: p.hp, maxHp: p.maxHp, level: p.level, xp: p.xp, mantleAwakened: p.mantleAwakened === 1,
-      abilityCooldown: p.abilityCooldown ?? 0, party: p.party ?? "", reviveProgress: p.reviveProgress ?? 0,
+      abilityCooldown: p.abilityCooldown ?? 0,
+      technique: p.technique || defaultTechniqueFor(p.classId),
+      guarding: p.guarding === 1,
+      classCharge: p.classCharge ?? 0,
+      classCooldown: p.classCooldown ?? 0,
+      party: p.party ?? "", reviveProgress: p.reviveProgress ?? 0,
     };
   }
 

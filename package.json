@@ -16,7 +16,8 @@
     "combat-bot": "tsx scripts/combat-bot.ts",
     "dungeon-bot": "tsx scripts/dungeon-bot.ts",
     "fetch-assets": "tsx scripts/fetch-assets.ts",
-    "build-env": "tsx scripts/build-env.ts"
+    "build-env": "tsx scripts/build-env.ts",
+    "build-monsters": "tsx scripts/build-monsters.ts"
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.5.1",

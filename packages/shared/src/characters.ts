@@ -48,6 +48,8 @@ export interface CharacterDraft {
 export interface CharacterSummary extends CharacterDraft {
   id: number;
   level: number;
+  technique: string;
+  mantlePath: string;
   updatedAt: string;
 }
 

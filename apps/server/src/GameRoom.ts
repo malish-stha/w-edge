@@ -1,7 +1,8 @@
 import { Room, ServerError, type AuthContext, type Client } from "colyseus";
 import {
   Buttons, COLOSSUS, DOWN_SECONDS, HP_REGEN, HP_REGEN_DELAY, MAX_LEVEL, Mode, PATCH_RATE, PLAYER_MAX_HP, TICK_RATE,
-  createMoveState, createStepEvents, levelForXp, stepMovement, type Fx, type World,
+  createMoveState, createStepEvents, defaultMantlePathFor, defaultTechniqueFor, levelForXp, pathsForMantle, stepMovement, techniquesForClass,
+  type Fx, type World,
 } from "@worlds-edge/shared";
 import { authConfig, verifySession } from "./auth.ts";
 import { Combat } from "./combat.ts";
@@ -85,14 +86,28 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
           const wasDown = player.downTime > 0;
           stepMovement(player, input, ctx.dt, this.world, ev);
           if (wasDown && player.downTime === 0) { player.hp = player.maxHp; player.reviveProgress = 0; }
+          this.combat.step(sid, player, ctx.dt);
           this.combat.resolve(sid, player, ev, input.yaw, input.pitch);
           if (ev.ability1 && !this.combat.ability(sid, player) && !player.mantleAwakened) {
             this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
+          }
+          if (ev.ability2 && !this.combat.ability2(sid, player, input.yaw, input.pitch) && !player.mantleAwakened) {
+            this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
+          }
+          if (ev.ability3 && !this.combat.explore(sid, player, input.yaw) && !player.mantleAwakened) {
+            this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
+          }
+          if (ev.ability4) {
+            const res = this.combat.ultimate(sid, player);
+            if (res === "dormant") this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
+            else if (res === "charge") this.notify(sid, `Ultimate needs 100% charge (${Math.floor(player.ultCharge)}%).`);
           }
           if (ev.interact) this.onInteract(sid, player);
           if ((input.buttons & Buttons.InteractHeld) !== 0) this.revive(sid, player, ctx.dt);
         }
         player.abilityCooldown = Math.max(0, player.abilityCooldown - ctx.dt);
+        player.ability2Cooldown = Math.max(0, player.ability2Cooldown - ctx.dt);
+        player.exploreCooldown = Math.max(0, player.exploreCooldown - ctx.dt);
         const meta = this.meta.get(sid);
         if (meta && player.downTime === 0 && player.hp < player.maxHp && this.now() - meta.lastHurt > HP_REGEN_DELAY) {
           player.hp = Math.min(player.maxHp, player.hp + HP_REGEN * ctx.dt);
@@ -126,6 +141,7 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     const p = this.state.players.get(sid);
     const meta = this.meta.get(sid);
     if (!p || !meta || p.downTime > 0) return;
+    if (this.combat.interceptDamage(sid, p)) return;
     meta.lastHurt = this.now();
     p.hp = Math.max(0, p.hp - amount);
     p.vx += knockX * power; p.vz += knockZ * power; p.vy = Math.max(p.vy, 5);
@@ -189,6 +205,7 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
       t.p.downTime = 0;
       t.p.reviveProgress = 0;
       t.p.hp = Math.ceil(t.p.maxHp / 2);
+      p.ultCharge = Math.min(100, p.ultCharge + 20);
       this.fx({ t: "ring", x: t.p.x, y: t.p.y, z: t.p.z, r: 3, kind: "revive" });
       this.notify(t.sid, `${p.name} revived you.`);
       this.notify(sid, `You revived ${t.p.name}.`);
@@ -267,6 +284,30 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
       if (!authConfig.devLogin) return;
       this.devBoss(client.sessionId, msg);
     });
+    this.onMessage("technique:set", (client, msg: { id?: string }) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || typeof msg?.id !== "string") return;
+      if (this.roomName !== "world") {
+        this.notify(client.sessionId, "Swap your signature technique outside the dungeon.");
+        return;
+      }
+      const valid = techniquesForClass(p.classId).find((t) => t.id === msg.id);
+      if (!valid) return;
+      p.technique = valid.id;
+      void this.save(client.sessionId);
+    });
+    this.onMessage("mantle-path:set", (client, msg: { id?: string }) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || typeof msg?.id !== "string") return;
+      if (this.roomName !== "world") {
+        this.notify(client.sessionId, "Swap your mantle upgrade path outside the dungeon.");
+        return;
+      }
+      const valid = pathsForMantle(p.mantle).find((m) => m.id === msg.id);
+      if (!valid) return;
+      p.mantlePath = valid.id;
+      void this.save(client.sessionId);
+    });
   }
 
   /** Test accounts only: adjust the encounter (dungeon overrides). */
@@ -294,6 +335,10 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     player.xp = character.xp;
     player.level = levelForXp(character.xp);
     player.mantleAwakened = character.mantleAwakened ? 1 : 0;
+    player.technique = character.technique || defaultTechniqueFor(character.classId);
+    player.guarding = 0;
+    player.classCharge = 0;
+    player.classCooldown = 0;
     // Schema fields start undefined: give every server-owned number a real value.
     player.abilityCooldown = 0;
     player.reviveProgress = 0;
@@ -344,7 +389,7 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     if (!meta || !p) return;
     try {
       const pos = this.savedPosition(p);
-      await store.saveProgress(meta.characterId, { ...pos, xp: p.xp, level: p.level, mantleAwakened: p.mantleAwakened === 1 });
+      await store.saveProgress(meta.characterId, { ...pos, xp: p.xp, level: p.level, mantleAwakened: p.mantleAwakened === 1, technique: p.technique });
     } catch (err) {
       console.error(`Could not save character ${meta.characterId}:`, err);
     }

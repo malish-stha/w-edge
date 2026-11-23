@@ -19,7 +19,33 @@ export const Buttons = {
   Descend: 4,
   Boost: 8,
   DodgePressed: 16,
+  AttackPressed: 32,
+  Ability1Pressed: 64,
+  InteractPressed: 128,
 } as const;
+
+/** What happened during one step that the server must resolve (hits, skills, interactions). */
+export interface StepEvents {
+  /** 1–3 when a basic attack started this step (position in the combo), else 0. */
+  attack: number;
+  ability1: boolean;
+  interact: boolean;
+  /** Speed of a dive or fast flight that slammed into the ground this step, else 0. */
+  impactSpeed: number;
+  /** 0 (flat) to 1 (vertical) for that impact. */
+  impactSteep: number;
+}
+
+export function createStepEvents(): StepEvents {
+  return { attack: 0, ability1: false, interact: false, impactSpeed: 0, impactSteep: 0 };
+}
+
+function clearEvents(e: StepEvents) {
+  e.attack = 0; e.ability1 = false; e.interact = false; e.impactSpeed = 0; e.impactSteep = 0;
+}
+
+/** Shared scratch for callers that don't care about events (client prediction). */
+const ignoredEvents = createStepEvents();
 
 /** One fixed step of player input. Field names match the server's input schema. */
 export interface MoveInput {
@@ -50,6 +76,16 @@ export interface MoveState {
   dodgeX: number;
   dodgeZ: number;
   safeX: number; safeY: number; safeZ: number;
+  /** Seconds left in the current attack's active window (drives the swing animation). */
+  attackTime: number;
+  /** Seconds until another attack can start. */
+  attackCooldown: number;
+  /** Position in the 3-hit combo of the last attack (1–3). */
+  attackCombo: number;
+  /** Seconds left to continue the combo. */
+  comboWindow: number;
+  /** Seconds until a downed player recovers at their safe spot (0 = up). Set by the server. */
+  downTime: number;
 }
 
 export function createMoveState(spawn: { x: number; y: number; z: number }): MoveState {
@@ -62,8 +98,17 @@ export function createMoveState(spawn: { x: number; y: number; z: number }): Mov
     facing: Math.PI,
     dodgeTime: 0, dodgeCooldown: 0, dodgeX: 0, dodgeZ: 0,
     safeX: spawn.x, safeY: spawn.y, safeZ: spawn.z,
+    attackTime: 0, attackCooldown: 0, attackCombo: 0, comboWindow: 0,
+    downTime: 0,
   };
 }
+
+const ATTACK_ACTIVE = 0.22;
+const ATTACK_RECOVERY = [0.32, 0.32, 0.55];
+const COMBO_WINDOW = 0.75;
+const ATTACK_LUNGE = 5;
+/** Slamming into the ground faster than this counts as an impact (the Lancer's dive strike). */
+export const IMPACT_MIN_SPEED = 22;
 
 const EPS = 1e-4;
 /** Longest distance moved in one collision sub-step, so fast dives can't tunnel through thin walls. */
@@ -176,8 +221,21 @@ function respawn(s: MoveState) {
   s.dodgeTime = 0;
 }
 
-/** Advance one player by one fixed step. Mutates `s`. */
-export function stepMovement(s: MoveState, input: MoveInput, dt: number, world: World): void {
+/**
+ * Advance one player by one fixed step. Mutates `s`. Things the server has to
+ * resolve (attacks, skills, impacts) are reported in `events`.
+ */
+export function stepMovement(s: MoveState, input: MoveInput, dt: number, world: World, events: StepEvents = ignoredEvents): void {
+  clearEvents(events);
+
+  // Downed: no control; fall, then recover at the safe spot.
+  if (s.downTime > 0) {
+    s.downTime = Math.max(0, s.downTime - dt);
+    if (s.downTime === 0) { respawn(s); return; }
+    input = { moveX: 0, moveZ: 0, yaw: input.yaw, pitch: 0, buttons: 0 };
+    if (s.mode === Mode.Flight || s.mode === Mode.Dive) s.mode = Mode.Air;
+  }
+
   const b = input.buttons;
   const jumpHeld = (b & Buttons.JumpHeld) !== 0;
   const jumpPressed = (b & Buttons.JumpPressed) !== 0;
@@ -200,6 +258,25 @@ export function stepMovement(s: MoveState, input: MoveInput, dt: number, world: 
     s.dodgeCooldown = C.DODGE_COOLDOWN;
     s.stamina -= C.DODGE_COST;
   }
+
+  // Basic attack: a three-hit combo with a small lunge toward where the camera looks.
+  s.attackTime = Math.max(0, s.attackTime - dt);
+  s.attackCooldown = Math.max(0, s.attackCooldown - dt);
+  s.comboWindow = Math.max(0, s.comboWindow - dt);
+  if ((b & Buttons.AttackPressed) !== 0 && s.attackCooldown <= 0) {
+    s.attackCombo = s.comboWindow > 0 ? (s.attackCombo % 3) + 1 : 1;
+    s.attackTime = ATTACK_ACTIVE;
+    s.attackCooldown = ATTACK_RECOVERY[s.attackCombo - 1];
+    s.comboWindow = s.attackCooldown + COMBO_WINDOW;
+    s.facing = input.yaw;
+    if (s.mode !== Mode.Dive) {
+      s.vx += Math.sin(input.yaw) * ATTACK_LUNGE;
+      s.vz += Math.cos(input.yaw) * ATTACK_LUNGE;
+    }
+    events.attack = s.attackCombo;
+  }
+  if ((b & Buttons.Ability1Pressed) !== 0) events.ability1 = true;
+  if ((b & Buttons.InteractPressed) !== 0) events.interact = true;
 
   const canBoost = boostHeld && s.exhausted === 0 && s.stamina > 0;
 
@@ -271,11 +348,16 @@ export function stepMovement(s: MoveState, input: MoveInput, dt: number, world: 
   }
 
   const speedBefore = Math.hypot(s.vx, s.vy, s.vz);
+  const vyBefore = s.vy;
   const hits = moveAndCollide(s, mvx * dt, s.vy * dt, mvz * dt, world, s.mode === Mode.Ground);
 
   if (hits.ground) {
     if (s.mode === Mode.Air) s.mode = Mode.Ground;
     else if (s.mode === Mode.Flight || s.mode === Mode.Dive) {
+      if (speedBefore >= IMPACT_MIN_SPEED && vyBefore < 0) {
+        events.impactSpeed = speedBefore;
+        events.impactSteep = Math.min(1, -vyBefore / speedBefore);
+      }
       // A slow or deliberate (descend held) approach lands; a fast one skims the surface.
       if (descend || speedBefore < C.LAND_SPEED) s.mode = Mode.Ground;
       else s.mode = Mode.Flight;
@@ -298,7 +380,7 @@ export function stepMovement(s: MoveState, input: MoveInput, dt: number, world: 
   if (s.y < C.KILL_Y) { respawn(s); return; }
 
   // Facing follows horizontal motion; in a dive it follows the camera.
-  if (s.mode === Mode.Dive) s.facing = input.yaw;
+  if (s.mode === Mode.Dive || s.attackTime > 0) s.facing = input.yaw;
   else if (Math.hypot(mvx, mvz) > 0.5) s.facing = Math.atan2(mvx, mvz);
 
   // Remember a safe spot to return to (only when it moved meaningfully, to save bandwidth).

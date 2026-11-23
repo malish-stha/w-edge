@@ -12,7 +12,8 @@
     "build": "npm run build -w @worlds-edge/client && npm run build -w @worlds-edge/server",
     "typecheck": "tsc -p packages/shared && tsc -p apps/server --noEmit && tsc -p apps/client --noEmit",
     "test": "npm run test -w @worlds-edge/shared",
-    "bot": "tsx scripts/bot.ts"
+    "bot": "tsx scripts/bot.ts",
+    "combat-bot": "tsx scripts/combat-bot.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS characters (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS mantle_awakened BOOLEAN NOT NULL DEFAULT false;
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_unique ON characters (lower(name));
 CREATE INDEX IF NOT EXISTS characters_account ON characters (account_id);
 `;
@@ -80,6 +81,8 @@ interface CharacterRow {
   mantle: string;
   appearance: CharacterDraft["appearance"];
   level: number;
+  xp: number;
+  mantle_awakened: boolean;
   pos_x: number | null;
   pos_y: number | null;
   pos_z: number | null;
@@ -88,7 +91,16 @@ interface CharacterRow {
 
 export interface StoredCharacter extends CharacterSummary {
   accountId: number;
+  xp: number;
+  mantleAwakened: boolean;
   position: { x: number; y: number; z: number } | null;
+}
+
+export interface Progress {
+  x: number; y: number; z: number;
+  xp: number;
+  level: number;
+  mantleAwakened: boolean;
 }
 
 function toCharacter(r: CharacterRow): StoredCharacter {
@@ -101,6 +113,8 @@ function toCharacter(r: CharacterRow): StoredCharacter {
     mantle: r.mantle as StoredCharacter["mantle"],
     appearance: typeof r.appearance === "string" ? JSON.parse(r.appearance) : r.appearance,
     level: r.level,
+    xp: r.xp,
+    mantleAwakened: r.mantle_awakened,
     updatedAt: new Date(r.updated_at).toISOString(),
     position: r.pos_x === null || r.pos_y === null || r.pos_z === null ? null : { x: r.pos_x, y: r.pos_y, z: r.pos_z },
   };
@@ -160,10 +174,11 @@ export class Store {
     return rows.length > 0;
   }
 
-  async savePosition(id: number, x: number, y: number, z: number): Promise<void> {
+  async saveProgress(id: number, p: Progress): Promise<void> {
     await this.sql.query(
-      `UPDATE characters SET pos_x = $2, pos_y = $3, pos_z = $4, updated_at = now() WHERE id = $1`,
-      [id, x, y, z],
+      `UPDATE characters SET pos_x = $2, pos_y = $3, pos_z = $4, xp = $5, level = $6, mantle_awakened = $7, updated_at = now()
+       WHERE id = $1`,
+      [id, p.x, p.y, p.z, p.xp, p.level, p.mantleAwakened],
     );
   }
 }

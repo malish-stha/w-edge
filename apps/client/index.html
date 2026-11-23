@@ -14,11 +14,26 @@
 
     <div id="hud" hidden>
       <div class="status-card">
-        <strong>World's Edge</strong>
+        <strong id="who">World's Edge</strong>
         <span id="status">Connecting…</span>
       </div>
       <div id="debug" hidden></div>
       <div id="compass"></div>
+      <div id="notices" aria-live="polite"></div>
+      <div id="crosshair" aria-hidden="true"></div>
+      <div id="prompt" hidden></div>
+      <div id="downed" hidden>Down — recovering at your last safe spot…</div>
+      <div id="vignette" aria-hidden="true"></div>
+      <div class="vitals">
+        <div class="vital-row"><span>HP</span><div class="bar hp"><div id="hp-fill"></div></div><span id="hp-text">100</span></div>
+        <div class="vital-row"><span id="level">Lv 1</span><div class="bar xp"><div id="xp-fill"></div></div><span id="xp-text">0 XP</span></div>
+      </div>
+      <div id="ability" class="ability locked">
+        <kbd>1</kbd>
+        <span id="ability-name">Mantle skill</span>
+        <span id="ability-state">Dormant</span>
+        <div id="ability-cd"></div>
+      </div>
       <div class="flight-panel">
         <div class="flight-row">
           <span id="mode">Walking</span>
@@ -37,21 +52,29 @@
           <dt>Ctrl or C</dt><dd>Descend · land</dd>
           <dt>Shift</dt><dd>Run · boost · look down to dive</dd>
           <dt>Q</dt><dd>Dodge</dd>
+          <dt>Left mouse</dt><dd>Attack (hold to combo)</dd>
+          <dt>1</dt><dd>Mantle skill</dd>
+          <dt>E</dt><dd>Interact (shrine)</dd>
           <dt>Wheel</dt><dd>Camera distance</dd>
+          <dt>Esc</dt><dd>Menu</dd>
           <dt>H · F3</dt><dd>Hide help · stats</dd>
         </dl>
       </div>
     </div>
 
-    <div id="start" class="start">
-      <div class="start-card">
-        <h1>World's Edge</h1>
-        <p class="tagline">Fly from First Harbour across the ocean to the edge of the world.</p>
-        <label for="name">Character name</label>
-        <input id="name" maxlength="20" autocomplete="off" spellcheck="false" placeholder="Traveller" />
-        <button id="play" type="button">Play</button>
-        <p id="start-note" class="note"></p>
+    <div id="menu" class="screen" hidden>
+      <div class="card">
+        <h2>Menu</h2>
+        <div class="stack">
+          <button id="menu-resume" class="primary">Resume</button>
+          <button id="menu-characters" class="secondary">Change character</button>
+          <button id="menu-signout" class="secondary">Sign out</button>
+        </div>
       </div>
+    </div>
+
+    <div id="screen" class="screen">
+      <div class="card"><h1>World's Edge</h1><p class="muted">Loading…</p></div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

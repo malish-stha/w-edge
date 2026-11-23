@@ -1,55 +1,99 @@
 /**
- * Browser smoke test: opens the client, joins, flies around, saves screenshots
- * and fails on console errors. Usage: npx tsx scripts/smoke.ts <outDir> [url] [browserPath]
+ * Browser smoke test of the whole first-session flow with test accounts:
+ * sign in → create a character → play → see a second player → sign out →
+ * sign back in → the character and its position are still there.
+ *
+ * Usage (server + client dev servers running):
+ *   npx tsx scripts/smoke.ts <outDir> [http://localhost:5173/] [browserPath]
  */
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 
 const out = process.argv[2] ?? "shots";
-const url = process.argv[3] ?? "http://localhost:5173/";
+const base = process.argv[3] ?? "http://localhost:5173/";
 const exe = process.argv[4] ?? "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
+const url = `${base}${base.includes("?") ? "&" : "?"}test`;
+const tag = Math.random().toString(36).replace(/[^a-z]/g, "").slice(0, 4);
 
 const browser = await chromium.launch({ executablePath: exe, headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors: string[] = [];
-page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); else console.log(`[${m.type()}]`, m.text()); });
-page.on("pageerror", (e) => errors.push(String(e)));
+const check = (ok: boolean, what: string) => { console.log(`${ok ? "✔" : "✖"} ${what}`); if (!ok) errors.push(what); };
 
-// A second player joins first, so the main page should see them.
-const friendPage = await browser.newPage({ viewport: { width: 640, height: 360 } });
-friendPage.on("pageerror", (e) => errors.push(`friend: ${e}`));
-if (!url.includes("offline")) {
-  await friendPage.goto(url);
-  await friendPage.fill("#name", "Friend");
-  await friendPage.click("#play");
-  await friendPage.waitForSelector("#hud:not([hidden])", { timeout: 10000 });
+async function open(name: string, size = { width: 1280, height: 720 }) {
+  const page = await browser.newPage({ viewport: size });
+  page.on("console", (m) => { if (m.type() === "error" && !m.text().includes("GL Driver")) errors.push(`${name}: ${m.text()}`); });
+  page.on("pageerror", (e) => errors.push(`${name}: ${e}`));
+  await page.goto(url);
+  return page;
 }
 
-await page.goto(url);
-await page.waitForTimeout(2500);
-await page.screenshot({ path: `${out}/0-start.png` });
-await page.fill("#name", "Tester");
-await page.click("#play");
-await page.waitForSelector("#hud:not([hidden])", { timeout: 10000 });
-await page.waitForTimeout(1500);
-const status = await page.textContent("#status");
-console.log("status:", status);
-await page.screenshot({ path: `${out}/1-joined.png` });
+async function signIn(page: Page, account: string) {
+  await page.waitForSelector("#dev-account", { timeout: 15000 });
+  await page.fill("#dev-account", account);
+  await page.click("text=Continue with test account");
+}
 
+async function create(page: Page, name: string, origin: string, cls: string) {
+  await page.waitForSelector("#char-name", { timeout: 10000 });
+  await page.fill("#char-name", name);
+  await page.click(`.choice:text-is("${origin}")`);
+  await page.click(`.choice:text-is("${cls}")`);
+}
+
+const pos = async (page: Page) => {
+  const text = (await page.textContent("#debug")) ?? "";
+  const m = text.match(/pos (-?[\d.]+), (-?[\d.]+), (-?[\d.]+)/);
+  return m ? { x: +m[1], y: +m[2], z: +m[3] } : null;
+};
+
+// Player two: a Stonekin Vanguard waiting in the world.
+const friend = await open("friend", { width: 640, height: 360 });
+await signIn(friend, `bob${tag}`);
+await create(friend, `Bob ${tag}`, "Stonekin", "Vanguard");
+await friend.click("text=Create and play");
+await friend.waitForSelector("#hud:not([hidden])", { timeout: 15000 });
+
+// Player one.
+const page = await open("main");
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${out}/0-sign-in.png` });
+await signIn(page, `alice${tag}`);
+await create(page, `Alice ${tag}`, "Skyborn", "Archer");
+await page.waitForTimeout(800);
+await page.screenshot({ path: `${out}/1-create.png` });
+await page.click("text=Create and play");
+await page.waitForSelector("#hud:not([hidden])", { timeout: 15000 });
+await page.waitForTimeout(1500);
+check((await page.textContent("#status"))?.includes("2 players") ?? false, "both players are in the same world");
+check((await page.textContent("#who"))?.includes("Skyborn Archer") ?? false, "HUD shows the character");
+await page.screenshot({ path: `${out}/2-world.png` });
+
+// Fly off and land somewhere new.
 const hold = async (key: string, ms: number) => { await page.keyboard.down(key); await page.waitForTimeout(ms); await page.keyboard.up(key); };
-await hold("KeyW", 800);
-await page.keyboard.press("Space"); await page.waitForTimeout(250); await page.keyboard.press("Space");
-await hold("Space", 1500);
-await page.screenshot({ path: `${out}/2-flying.png` });
-console.log("after take-off:", await page.textContent("#mode"), await page.textContent("#altitude"), await page.textContent("#compass"));
-await page.keyboard.down("KeyW"); await page.keyboard.down("ShiftLeft");
-await page.waitForTimeout(2000);
-console.log("boosting:", await page.textContent("#mode"), await page.textContent("#speed"));
-await page.screenshot({ path: `${out}/3-boost.png` });
-await page.keyboard.up("ShiftLeft"); await page.keyboard.up("KeyW");
 await page.keyboard.press("F3");
+await page.keyboard.press("Space"); await page.waitForTimeout(250); await page.keyboard.press("Space");
+await hold("Space", 1200);
+await page.keyboard.down("KeyW"); await page.waitForTimeout(1500); await page.keyboard.up("KeyW");
+await page.screenshot({ path: `${out}/3-flying.png` });
+await hold("KeyC", 4000);
 await page.waitForTimeout(500);
-console.log("debug:", await page.textContent("#debug"));
-await page.screenshot({ path: `${out}/4-debug.png` });
+const landed = await pos(page);
+console.log("landed at", landed, await page.textContent("#mode"));
+
+// Sign out, sign back in: same character, same place.
+await page.evaluate(() => (document.getElementById("menu-signout") as HTMLButtonElement).click());
+await signIn(page, `alice${tag}`);
+await page.waitForSelector(".character", { timeout: 10000 });
+check((await page.textContent(".characters"))?.includes(`Alice ${tag}`) ?? false, "character is listed after signing back in");
+await page.screenshot({ path: `${out}/4-characters.png` });
+await page.click(".character >> text=Play");
+await page.waitForSelector("#hud:not([hidden])", { timeout: 15000 });
+await page.waitForTimeout(1500);
+await page.keyboard.press("F3");
+const resumed = await pos(page);
+console.log("resumed at", resumed);
+check(!!landed && !!resumed && Math.hypot(landed.x - resumed.x, landed.z - resumed.z) < 4, "resumes where it landed");
+await page.screenshot({ path: `${out}/5-resumed.png` });
+
 console.log("errors:", errors.length ? errors : "none");
 await browser.close();
 process.exit(errors.length ? 1 : 0);

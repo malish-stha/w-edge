@@ -14,17 +14,30 @@ export class Input {
   private keys = new Set<string>();
   private jumpQueued = false;
   private dodgeQueued = false;
+  private attackQueued = false;
+  private abilityQueued = false;
+  private interactQueued = false;
+  private mouseDown = false;
   private listeners = new Map<string, Array<() => void>>();
+
+  /** Treat input as captured even without pointer lock (automated tests). */
+  forceActive = false;
 
   constructor(private canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (e) => {
       if (e.repeat) return;
+      // Typing in a form field (character name, etc.) isn't game input.
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.code === "Space") this.jumpQueued = true;
       if (e.code === "KeyQ") this.dodgeQueued = true;
+      if (e.code === "Digit1") this.abilityQueued = true;
+      if (e.code === "KeyE") this.interactQueued = true;
+      // Test mode has no mouse capture: F attacks too.
+      if (e.code === "KeyF" && this.forceActive) this.attackQueued = true;
       this.keys.add(e.code);
       this.emit(e.code);
       // Keep the page from scrolling or the browser from acting on game keys.
-      if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "ShiftLeft"].includes(e.code)) {
+      if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "Digit1", "ShiftLeft"].includes(e.code)) {
         e.preventDefault();
       }
     });
@@ -32,8 +45,15 @@ export class Input {
     window.addEventListener("blur", () => this.keys.clear());
 
     canvas.addEventListener("click", () => this.lock());
+    // Left button attacks (holding it keeps the combo going); only while the mouse is captured.
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || document.pointerLockElement !== this.canvas) return;
+      this.attackQueued = true;
+      this.mouseDown = true;
+    });
+    window.addEventListener("mouseup", (e) => { if (e.button === 0) this.mouseDown = false; });
     document.addEventListener("mousemove", (e) => {
-      if (!this.locked) return;
+      if (document.pointerLockElement !== this.canvas) return;
       const sensitivity = 0.0022;
       this.yaw += e.movementX * sensitivity;
       this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch - e.movementY * sensitivity));
@@ -45,11 +65,11 @@ export class Input {
   }
 
   get locked() {
-    return document.pointerLockElement === this.canvas;
+    return this.forceActive || document.pointerLockElement === this.canvas;
   }
 
   lock() {
-    if (!this.locked) {
+    if (document.pointerLockElement !== this.canvas) {
       const request = this.canvas.requestPointerLock() as unknown;
       if (request instanceof Promise) request.catch(() => {});
     }
@@ -71,18 +91,33 @@ export class Input {
 
   /** Build the input for one fixed step and consume latched presses. */
   sample(): MoveInput {
+    if (!this.locked) {
+      // Menu open: stand still (the world keeps running).
+      this.clearPresses();
+      return { moveX: 0, moveZ: 0, yaw: Math.fround(this.wrappedYaw()), pitch: Math.fround(this.pitch), buttons: 0 };
+    }
     let buttons = 0;
     if (this.held("Space")) buttons |= Buttons.JumpHeld;
     if (this.jumpQueued) buttons |= Buttons.JumpPressed;
     if (this.held("ControlLeft", "ControlRight", "KeyC")) buttons |= Buttons.Descend;
     if (this.held("ShiftLeft", "ShiftRight")) buttons |= Buttons.Boost;
     if (this.dodgeQueued) buttons |= Buttons.DodgePressed;
-    this.jumpQueued = false;
-    this.dodgeQueued = false;
+    if (this.attackQueued || this.mouseDown) buttons |= Buttons.AttackPressed;
+    if (this.abilityQueued) buttons |= Buttons.Ability1Pressed;
+    if (this.interactQueued) buttons |= Buttons.InteractPressed;
+    this.clearPresses();
     const moveZ = (this.held("KeyW", "ArrowUp") ? 100 : 0) - (this.held("KeyS", "ArrowDown") ? 100 : 0);
     const moveX = (this.held("KeyD", "ArrowRight") ? 100 : 0) - (this.held("KeyA", "ArrowLeft") ? 100 : 0);
     // Quantise the angles to float32 so prediction uses exactly what the server receives.
     return { moveX, moveZ, yaw: Math.fround(this.wrappedYaw()), pitch: Math.fround(this.pitch), buttons };
+  }
+
+  private clearPresses() {
+    this.jumpQueued = false;
+    this.dodgeQueued = false;
+    this.attackQueued = false;
+    this.abilityQueued = false;
+    this.interactQueued = false;
   }
 
   private wrappedYaw() {

@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  Buttons, Mode, STEP_SECONDS, STAMINA_MAX, KILL_Y, RIM_Z,
-  createMoveState, getWorld, stepMovement, type MoveInput, type MoveState,
+  Buttons, IMPACT_MIN_SPEED, Mode, STEP_SECONDS, STAMINA_MAX, KILL_Y, RIM_Z,
+  createMoveState, createStepEvents, getWorld, stepMovement, type MoveInput, type MoveState,
 } from "./index.ts";
 
 const world = getWorld();
@@ -119,6 +119,45 @@ test("beyond the rim there is no sea: you fall to the settlement", () => {
   run(s, {}, 30 * 6);
   assert.equal(s.mode, Mode.Ground);
   assert.ok(s.y < -80 && s.y > KILL_Y, `y=${s.y}`);
+});
+
+test("attacks chain into a three-hit combo, then restart", () => {
+  const s = settled();
+  const ev = createStepEvents();
+  const hits: number[] = [];
+  for (let i = 0; i < 30 * 3; i++) {
+    stepMovement(s, { ...idle, buttons: Buttons.AttackPressed }, STEP_SECONDS, world, ev);
+    if (ev.attack) hits.push(ev.attack);
+  }
+  assert.deepEqual(hits.slice(0, 4), [1, 2, 3, 1]);
+  // After a pause the combo starts over.
+  run(s, {}, 60);
+  stepMovement(s, { ...idle, buttons: Buttons.AttackPressed }, STEP_SECONDS, world, ev);
+  assert.equal(ev.attack, 1);
+});
+
+test("a fast dive into the ground reports an impact", () => {
+  const s = airborne(60);
+  const ev = createStepEvents();
+  let impact = 0, steep = 0;
+  for (let i = 0; i < 30 * 6 && !impact; i++) {
+    stepMovement(s, { ...idle, moveZ: 100, pitch: -1.2, buttons: Buttons.Boost }, STEP_SECONDS, world, ev);
+    if (ev.impactSpeed) { impact = ev.impactSpeed; steep = ev.impactSteep; }
+  }
+  assert.ok(impact >= IMPACT_MIN_SPEED, `impact speed ${impact}`);
+  assert.ok(steep > 0.7, `steepness ${steep}`);
+});
+
+test("downed players can't act and recover at their safe spot", () => {
+  const s = settled();
+  run(s, { moveZ: 100 }, 30);
+  s.downTime = 1;
+  const x = s.x, z = s.z;
+  run(s, { moveZ: 100, buttons: Buttons.AttackPressed }, 15);
+  assert.ok(Math.hypot(s.x - x, s.z - z) < 0.6, "should not move while down");
+  run(s, {}, 30);
+  assert.equal(s.downTime, 0);
+  assert.ok(Math.hypot(s.x - s.safeX, s.z - s.safeZ) < 0.01);
 });
 
 test("simulation is deterministic", () => {

@@ -26,11 +26,37 @@ export const Player = schema({
   dodgeCooldown: t.float32(),
   dodgeX: t.float32(), dodgeZ: t.float32(),
   safeX: t.float32(), safeY: t.float32(), safeZ: t.float32(),
+  attackTime: t.float32(),
+  attackCooldown: t.float32(),
+  attackCombo: t.uint8(),
+  comboWindow: t.float32(),
+  downTime: t.float32(),
+  // Combat and progression (server-owned).
+  hp: t.float32(),
+  maxHp: t.uint8(),
+  level: t.uint8(),
+  xp: t.uint16(),
+  mantleAwakened: t.uint8(),
+  abilityCooldown: t.float32(),
 }, "Player");
 export type Player = SchemaType<typeof Player>;
 
+export const Enemy = schema({
+  kind: t.string(),
+  x: t.float32(), y: t.float32(), z: t.float32(),
+  facing: t.float32(),
+  hp: t.float32(),
+  maxHp: t.uint16(),
+  guard: t.float32(),
+  maxGuard: t.uint16(),
+  /** EnemyState */
+  state: t.uint8(),
+}, "Enemy");
+export type Enemy = SchemaType<typeof Enemy>;
+
 export const WorldState = schema({
   players: t.map(Player),
+  enemies: t.map(Enemy),
 }, "WorldState");
 export type WorldState = SchemaType<typeof WorldState>;
 

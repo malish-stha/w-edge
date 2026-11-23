@@ -1,0 +1,6 @@
+# Put Caddy in front of the game server on your VM. It fetches a free TLS certificate
+# automatically, so browsers on your https:// client can connect with wss://.
+# Replace the domain with one that points at the VM's public IP.
+game.example.com {
+	reverse_proxy localhost:2567
+}

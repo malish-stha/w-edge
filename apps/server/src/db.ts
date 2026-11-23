@@ -1,0 +1,169 @@
+/**
+ * Persistence. Uses Postgres when DATABASE_URL is set; otherwise PGlite, an
+ * in-process Postgres (WASM) stored under ./data, so local development needs no
+ * database install. Both run the same SQL.
+ */
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+import type { CharacterDraft, CharacterSummary } from "@worlds-edge/shared";
+
+export interface Sql {
+  query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]>;
+  exec(text: string): Promise<void>;
+  close(): Promise<void>;
+}
+
+const MIGRATION = /* sql */ `
+CREATE TABLE IF NOT EXISTS accounts (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_login_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (provider, subject)
+);
+CREATE TABLE IF NOT EXISTS characters (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  class_id TEXT NOT NULL,
+  mantle TEXT NOT NULL,
+  appearance JSONB NOT NULL,
+  level INTEGER NOT NULL DEFAULT 1,
+  xp INTEGER NOT NULL DEFAULT 0,
+  pos_x REAL, pos_y REAL, pos_z REAL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS characters_name_unique ON characters (lower(name));
+CREATE INDEX IF NOT EXISTS characters_account ON characters (account_id);
+`;
+
+export async function openSql(): Promise<Sql> {
+  let sql: Sql;
+  if (process.env.DATABASE_URL) {
+    const { default: pg } = await import("pg");
+    const pool = new pg.Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DATABASE_SSL === "0" ? undefined : process.env.DATABASE_URL.includes("localhost") ? undefined : { rejectUnauthorized: false },
+      max: 5,
+    });
+    sql = {
+      async query(text, params) { return (await pool.query(text, params as unknown[])).rows; },
+      async exec(text) { await pool.query(text); },
+      async close() { await pool.end(); },
+    };
+    console.log("Database: Postgres");
+  } else {
+    const dir = resolve(process.env.DATA_DIR ?? "data", "pglite");
+    mkdirSync(dir, { recursive: true });
+    const { PGlite } = await import("@electric-sql/pglite");
+    const db = await PGlite.create(dir);
+    sql = {
+      async query<T>(text: string, params?: unknown[]) { return (await db.query<T>(text, params)).rows; },
+      async exec(text) { await db.exec(text); },
+      async close() { await db.close(); },
+    };
+    console.log(`Database: PGlite at ${dir}`);
+  }
+  await sql.exec(MIGRATION);
+  return sql;
+}
+
+interface CharacterRow {
+  id: number;
+  account_id: number;
+  name: string;
+  origin: string;
+  class_id: string;
+  mantle: string;
+  appearance: CharacterDraft["appearance"];
+  level: number;
+  pos_x: number | null;
+  pos_y: number | null;
+  pos_z: number | null;
+  updated_at: Date | string;
+}
+
+export interface StoredCharacter extends CharacterSummary {
+  accountId: number;
+  position: { x: number; y: number; z: number } | null;
+}
+
+function toCharacter(r: CharacterRow): StoredCharacter {
+  return {
+    id: r.id,
+    accountId: r.account_id,
+    name: r.name,
+    origin: r.origin as StoredCharacter["origin"],
+    classId: r.class_id as StoredCharacter["classId"],
+    mantle: r.mantle as StoredCharacter["mantle"],
+    appearance: typeof r.appearance === "string" ? JSON.parse(r.appearance) : r.appearance,
+    level: r.level,
+    updatedAt: new Date(r.updated_at).toISOString(),
+    position: r.pos_x === null || r.pos_y === null || r.pos_z === null ? null : { x: r.pos_x, y: r.pos_y, z: r.pos_z },
+  };
+}
+
+export class NameTakenError extends Error {}
+
+export class Store {
+  constructor(private sql: Sql) {}
+
+  /** Find or create the account for an identity provider subject. Returns the account id. */
+  async accountFor(provider: string, subject: string): Promise<number> {
+    const rows = await this.sql.query<{ id: number }>(
+      `INSERT INTO accounts (provider, subject) VALUES ($1, $2)
+       ON CONFLICT (provider, subject) DO UPDATE SET last_login_at = now()
+       RETURNING id`,
+      [provider, subject],
+    );
+    return rows[0].id;
+  }
+
+  async listCharacters(accountId: number): Promise<StoredCharacter[]> {
+    const rows = await this.sql.query<CharacterRow>(
+      `SELECT * FROM characters WHERE account_id = $1 ORDER BY updated_at DESC`, [accountId],
+    );
+    return rows.map(toCharacter);
+  }
+
+  async countCharacters(accountId: number): Promise<number> {
+    const rows = await this.sql.query<{ n: number }>(`SELECT count(*)::int AS n FROM characters WHERE account_id = $1`, [accountId]);
+    return rows[0].n;
+  }
+
+  async createCharacter(accountId: number, d: CharacterDraft): Promise<StoredCharacter> {
+    try {
+      const rows = await this.sql.query<CharacterRow>(
+        `INSERT INTO characters (account_id, name, origin, class_id, mantle, appearance)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb) RETURNING *`,
+        [accountId, d.name, d.origin, d.classId, d.mantle, JSON.stringify(d.appearance)],
+      );
+      return toCharacter(rows[0]);
+    } catch (err) {
+      if (String((err as { code?: string }).code) === "23505") throw new NameTakenError("That name is taken.");
+      throw err;
+    }
+  }
+
+  async getCharacter(id: number, accountId: number): Promise<StoredCharacter | null> {
+    const rows = await this.sql.query<CharacterRow>(
+      `SELECT * FROM characters WHERE id = $1 AND account_id = $2`, [id, accountId],
+    );
+    return rows[0] ? toCharacter(rows[0]) : null;
+  }
+
+  async deleteCharacter(id: number, accountId: number): Promise<boolean> {
+    const rows = await this.sql.query(`DELETE FROM characters WHERE id = $1 AND account_id = $2 RETURNING id`, [id, accountId]);
+    return rows.length > 0;
+  }
+
+  async savePosition(id: number, x: number, y: number, z: number): Promise<void> {
+    await this.sql.query(
+      `UPDATE characters SET pos_x = $2, pos_y = $3, pos_z = $4, updated_at = now() WHERE id = $1`,
+      [id, x, y, z],
+    );
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "worlds-edge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c cyan,magenta \"npm run dev -w @worlds-edge/server\" \"npm run dev -w @worlds-edge/client\"",
+    "build": "npm run build -w @worlds-edge/client && npm run build -w @worlds-edge/server",
+    "typecheck": "tsc -p packages/shared && tsc -p apps/server --noEmit && tsc -p apps/client --noEmit",
+    "test": "npm run test -w @worlds-edge/shared",
+    "bot": "tsx scripts/bot.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "concurrently": "^10.0.7",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.65.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

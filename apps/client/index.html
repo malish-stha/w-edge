@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>World's Edge</title>
+    <meta name="description" content="Fly from First Harbour across the ocean to the edge of the world." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23153049'/%3E%3Cpath d='M4 18h24v3H4z' fill='%237fd8ff'/%3E%3Cpath d='M16 5l4 9h-8z' fill='%23ffd36b'/%3E%3Cpath d='M6 21h20v6H6z' fill='%23e3f4ff' opacity='.6'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="game" tabindex="0"></canvas>
+    <div id="labels"></div>
+
+    <div id="hud" hidden>
+      <div class="status-card">
+        <strong>World's Edge</strong>
+        <span id="status">Connecting…</span>
+      </div>
+      <div id="debug" hidden></div>
+      <div id="compass"></div>
+      <div class="flight-panel">
+        <div class="flight-row">
+          <span id="mode">Walking</span>
+          <span id="speed">0 m/s</span>
+          <span id="altitude">0 m</span>
+        </div>
+        <div class="stamina" aria-label="Stamina">
+          <div id="stamina-fill"></div>
+        </div>
+      </div>
+      <div id="help" class="help">
+        <strong>Controls</strong>
+        <dl>
+          <dt>WASD + mouse</dt><dd>Move and look</dd>
+          <dt>Space</dt><dd>Jump · Space again in midair to fly · hold to climb</dd>
+          <dt>Ctrl or C</dt><dd>Descend · land</dd>
+          <dt>Shift</dt><dd>Run · boost · look down to dive</dd>
+          <dt>Q</dt><dd>Dodge</dd>
+          <dt>Wheel</dt><dd>Camera distance</dd>
+          <dt>H · F3</dt><dd>Hide help · stats</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div id="start" class="start">
+      <div class="start-card">
+        <h1>World's Edge</h1>
+        <p class="tagline">Fly from First Harbour across the ocean to the edge of the world.</p>
+        <label for="name">Character name</label>
+        <input id="name" maxlength="20" autocomplete="off" spellcheck="false" placeholder="Traveller" />
+        <button id="play" type="button">Play</button>
+        <p id="start-note" class="note"></p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

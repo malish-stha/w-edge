@@ -41,6 +41,7 @@ html, body {
   background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px;
 }
 .status-card span { color: var(--muted); font-size: 13px; }
+.status-card .quest-line { color: var(--accent); font-size: 12px; font-weight: 600; margin-top: 2px; }
 
 #debug {
   position: absolute; top: 80px; left: 16px;
@@ -109,21 +110,28 @@ html, body {
 .bar.hp > div { background: #6ee07a; }
 .bar.hp.low > div { background: var(--exhausted); }
 .bar.xp > div { background: var(--accent); }
+.hotbar {
+  position: absolute; bottom: 24px; right: 16px;
+  display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; justify-content: flex-end;
+  max-width: calc(100vw - 320px);
+}
 .ability {
-  position: absolute; bottom: 24px; right: 16px; width: 150px;
-  padding: 10px 12px; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center;
+  position: relative; width: 132px;
+  padding: 8px 10px; display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center;
   background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; overflow: hidden;
 }
-.ability.class-skill { right: 176px; width: 190px; }
+.ability.class-skill { width: 168px; }
+.ability.ult.ready { border-color: var(--accent); box-shadow: 0 0 12px rgba(255, 211, 107, 0.35); }
 .ability kbd {
-  grid-row: span 2; display: grid; place-items: center; min-width: 30px; padding: 0 5px; height: 30px; border-radius: 8px;
-  background: rgba(255, 255, 255, 0.12); font: 600 13px/1 inherit; color: var(--accent);
+  grid-row: span 2; display: grid; place-items: center; min-width: 26px; padding: 0 5px; height: 26px; border-radius: 7px;
+  background: rgba(255, 255, 255, 0.12); font: 600 12px/1 inherit; color: var(--accent);
 }
-#ability-name, #class-name { font-weight: 600; font-size: 13px; }
-#ability-state, #class-state { font-size: 12px; color: var(--muted); }
+#ability-name, #ability2-name, #ability3-name, #ability4-name, #class-name { font-weight: 600; font-size: 12.5px; }
+#ability-state, #ability2-state, #ability3-state, #ability4-state, #class-state { font-size: 11.5px; color: var(--muted); }
 .tech-sub { grid-column: 1 / -1; font-size: 11px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ability.locked { opacity: 0.6; }
-#ability-cd, #class-cd { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--stamina); width: 0; }
+#ability-cd, #ability2-cd, #ability3-cd, #ability4-cd, #class-cd { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--stamina); width: 0; }
+#ability4-cd { background: var(--accent); }
 #prompt {
   position: absolute; left: 50%; top: 62%; transform: translateX(-50%);
   padding: 8px 14px; border-radius: 999px; background: var(--panel-solid); border: 1px solid var(--accent);
@@ -209,8 +217,9 @@ html, body {
 
 @media (max-width: 640px) {
   #party-frames { top: auto; bottom: 200px; width: 160px; }
-  .ability { width: 120px; bottom: 110px; }
-  .ability.class-skill { right: 144px; width: 150px; }
+  .hotbar { bottom: 110px; max-width: calc(100vw - 24px); gap: 6px; }
+  .ability { width: 112px; }
+  .ability.class-skill { width: 140px; }
   .vitals { bottom: 110px; }
 }
 

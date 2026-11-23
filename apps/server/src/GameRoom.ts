@@ -1,6 +1,6 @@
 import { Room, ServerError, type AuthContext, type Client } from "colyseus";
 import {
-  Buttons, COLOSSUS, DOWN_SECONDS, HP_REGEN, HP_REGEN_DELAY, MAX_LEVEL, Mode, PATCH_RATE, PLAYER_MAX_HP, TICK_RATE,
+  Buttons, COLOSSUS, DOWN_SECONDS, HP_REGEN, HP_REGEN_DELAY, Mode, PATCH_RATE, PLAYER_MAX_HP, TICK_RATE, UNLOCK_LEVELS,
   createMoveState, createStepEvents, defaultMantlePathFor, defaultTechniqueFor, levelForXp, pathsForMantle, stepMovement, techniquesForClass,
   type Fx, type World,
 } from "@worlds-edge/shared";
@@ -91,8 +91,9 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
           if (ev.ability1 && !this.combat.ability(sid, player) && !player.mantleAwakened) {
             this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
           }
-          if (ev.ability2 && !this.combat.ability2(sid, player, input.yaw, input.pitch) && !player.mantleAwakened) {
-            this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
+          if (ev.ability2 && !this.combat.ability2(sid, player, input.yaw, input.pitch)) {
+            if (!player.mantleAwakened) this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
+            else if (player.level < UNLOCK_LEVELS.secondSkill) this.notify(sid, `Reach level ${UNLOCK_LEVELS.secondSkill} to unlock your second mantle skill.`);
           }
           if (ev.ability3 && !this.combat.explore(sid, player, input.yaw) && !player.mantleAwakened) {
             this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
@@ -167,9 +168,12 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     p.level = levelForXp(p.xp);
     if (p.level > before) {
       this.fx({ t: "level", id: sid, level: p.level });
-      this.notify(sid, p.level >= COLOSSUS.minLevel
-        ? `Level ${p.level}${p.level >= MAX_LEVEL ? " (max)" : ""}: the Drowned Colossus gate beyond the rim is open to you.`
-        : `Level ${p.level}!`);
+      const unlocks: string[] = [];
+      if (before < UNLOCK_LEVELS.boostDive && p.level >= UNLOCK_LEVELS.boostDive) unlocks.push("Boost & Dive (Shift)");
+      if (before < UNLOCK_LEVELS.technique && p.level >= UNLOCK_LEVELS.technique) unlocks.push("Signature Techniques (K)");
+      if (before < UNLOCK_LEVELS.secondSkill && p.level >= UNLOCK_LEVELS.secondSkill) unlocks.push("Second Mantle Skill (2)");
+      if (before < UNLOCK_LEVELS.upgradePath && p.level >= UNLOCK_LEVELS.upgradePath) unlocks.push("Mantle Upgrade Paths (K) & Drowned Colossus gate");
+      this.notify(sid, unlocks.length ? `Level ${p.level}! Unlocked: ${unlocks.join(", ")}.` : `Level ${p.level}!`);
       void this.save(sid);
     }
   }
@@ -287,6 +291,10 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     this.onMessage("technique:set", (client, msg: { id?: string }) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || typeof msg?.id !== "string") return;
+      if (p.level < UNLOCK_LEVELS.technique) {
+        this.notify(client.sessionId, `Reach level ${UNLOCK_LEVELS.technique} to equip signature techniques.`);
+        return;
+      }
       if (this.roomName !== "world") {
         this.notify(client.sessionId, "Swap your signature technique outside the dungeon.");
         return;
@@ -299,6 +307,10 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     this.onMessage("mantle-path:set", (client, msg: { id?: string }) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || typeof msg?.id !== "string") return;
+      if (p.level < UNLOCK_LEVELS.upgradePath) {
+        this.notify(client.sessionId, `Reach level ${UNLOCK_LEVELS.upgradePath} to choose a mantle upgrade path.`);
+        return;
+      }
       if (this.roomName !== "world") {
         this.notify(client.sessionId, "Swap your mantle upgrade path outside the dungeon.");
         return;
@@ -336,11 +348,17 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     player.level = levelForXp(character.xp);
     player.mantleAwakened = character.mantleAwakened ? 1 : 0;
     player.technique = character.technique || defaultTechniqueFor(character.classId);
+    player.mantlePath = character.mantlePath || defaultMantlePathFor(character.mantle);
+    player.questStep = character.questStep ?? 0;
     player.guarding = 0;
     player.classCharge = 0;
     player.classCooldown = 0;
-    // Schema fields start undefined: give every server-owned number a real value.
     player.abilityCooldown = 0;
+    player.ability2Cooldown = 0;
+    player.exploreCooldown = 0;
+    player.ultCharge = 0;
+    player.giant = 0;
+    // Schema fields start undefined: give every server-owned number a real value.
     player.reviveProgress = 0;
     player.away = 0;
     player.party = Parties.partyId(character.id);
@@ -389,7 +407,7 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     if (!meta || !p) return;
     try {
       const pos = this.savedPosition(p);
-      await store.saveProgress(meta.characterId, { ...pos, xp: p.xp, level: p.level, mantleAwakened: p.mantleAwakened === 1, technique: p.technique });
+      await store.saveProgress(meta.characterId, { ...pos, xp: p.xp, level: p.level, mantleAwakened: p.mantleAwakened === 1, technique: p.technique, mantlePath: p.mantlePath, questStep: p.questStep });
     } catch (err) {
       console.error(`Could not save character ${meta.characterId}:`, err);
     }

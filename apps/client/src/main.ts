@@ -4,7 +4,8 @@ import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import {
-  BossPhase, COLOSSUS, MANTLES, Mode, SHRINE, defaultTechniqueFor, getWorld, randomDraft, techniqueDisplay, techniquesForClass,
+  BossPhase, COLOSSUS, MANTLES, Mode, ORIGIN_QUESTS, SHRINE, UNLOCK_LEVELS,
+  defaultTechniqueFor, getWorld, pathsForMantle, randomDraft, techniqueDisplay, techniquesForClass,
   type CharacterDraft, type CharacterSummary, type Fx, type World,
 } from "@worlds-edge/shared";
 import { ColossusRig } from "./render/colossus.ts";
@@ -430,10 +431,12 @@ function renderTechPanel() {
   const self = session?.self();
   if (!self) return;
   const list = document.getElementById("tech-list")!;
+  const pathList = document.getElementById("path-list")!;
   const intro = document.getElementById("tech-intro")!;
-  intro.textContent = `Choose a signature technique for your ${self.classId} (${MANTLES.find((m) => m.id === self.mantle)?.name ?? self.mantle} mantle).`;
-  const options = techniquesForClass(self.classId);
-  list.replaceChildren(...options.map((t) => {
+  intro.textContent = `Customise your ${self.classId} signature technique and ${MANTLES.find((m) => m.id === self.mantle)?.name ?? self.mantle} mantle upgrade path.`;
+  const techLocked = self.level < UNLOCK_LEVELS.technique;
+  const pathLocked = self.level < UNLOCK_LEVELS.upgradePath;
+  list.replaceChildren(...techniquesForClass(self.classId).map((t) => {
     const li = document.createElement("li");
     li.className = "character";
     const { title } = techniqueDisplay(t.id, self.classId, self.mantle);
@@ -442,13 +445,34 @@ function renderTechPanel() {
     li.querySelector("strong")!.textContent = title;
     li.querySelector("small")!.textContent = `${t.effect} Rewards: ${t.rewards}`;
     const btn = document.createElement("button");
-    btn.className = active ? "primary" : "secondary";
-    btn.textContent = active ? "Equipped" : "Equip";
-    btn.disabled = active || !(session instanceof OnlineSession);
+    btn.className = active && !techLocked ? "primary" : "secondary";
+    btn.textContent = techLocked ? `Lv ${UNLOCK_LEVELS.technique}` : active ? "Equipped" : "Equip";
+    btn.disabled = techLocked || active || !(session instanceof OnlineSession);
     btn.onclick = () => {
       if (session instanceof OnlineSession) {
         session.send("technique:set", { id: t.id });
         hud.notice(`Equipped ${title}.`);
+        closeTechPanel();
+      }
+    };
+    li.append(btn);
+    return li;
+  }));
+  pathList.replaceChildren(...pathsForMantle(self.mantle).map((p) => {
+    const li = document.createElement("li");
+    li.className = "character";
+    const active = self.mantlePath === p.id;
+    li.innerHTML = `<span class="who"><strong></strong><small></small></span>`;
+    li.querySelector("strong")!.textContent = p.name;
+    li.querySelector("small")!.textContent = p.effect;
+    const btn = document.createElement("button");
+    btn.className = active && !pathLocked ? "primary" : "secondary";
+    btn.textContent = pathLocked ? `Lv ${UNLOCK_LEVELS.upgradePath}` : active ? "Active" : "Select";
+    btn.disabled = pathLocked || active || !(session instanceof OnlineSession);
+    btn.onclick = () => {
+      if (session instanceof OnlineSession) {
+        session.send("mantle-path:set", { id: p.id });
+        hud.notice(`Selected ${p.name}.`);
         closeTechPanel();
       }
     };
@@ -576,9 +600,14 @@ function contextPrompt(s: Session, self: PlayerView, players: PlayerView[]): { k
   if (pendingReady) return { key: "Y", text: `Ready to face the Drowned Colossus` };
 
   if (s.place === "world") {
+    const q = ORIGIN_QUESTS[self.origin];
+    if (q && self.questStep === 0 && Math.hypot(self.x - q.target.x, self.z - q.target.z) < q.target.radius && Math.abs(self.y - q.target.y) < 6) {
+      return { key: "E", text: q.step0Text };
+    }
     const atShrine = Math.hypot(self.x - SHRINE.x, self.z - SHRINE.z) < SHRINE.radius && Math.abs(self.y - SHRINE.y) < 4;
-    if (atShrine && !self.mantleAwakened) {
-      return { key: "E", text: `Awaken the ${MANTLES.find((m) => m.id === self.mantle)?.name ?? "your"} mantle` };
+    if (atShrine && (!self.mantleAwakened || self.questStep === 1)) {
+      const mName = MANTLES.find((m) => m.id === self.mantle)?.name ?? "your";
+      return { key: "E", text: self.questStep === 1 && self.mantleAwakened ? `Complete ${q?.title ?? "origin quest"}` : `Awaken the ${mName} mantle` };
     }
     const g = COLOSSUS.gate;
     if (Math.hypot(self.x - g.x, self.z - g.z) < g.radius && Math.abs(self.y - g.y) < 6) {
@@ -661,8 +690,10 @@ function framePreview(now: number, dt: number) {
     x: PREVIEW_SPOT.x, y: PREVIEW_SPOT.y + (flying ? 1.2 : 0), z: PREVIEW_SPOT.z,
     vx: flying ? Math.sin(facing) * 9 : 0, vy: 0, vz: flying ? Math.cos(facing) * 9 : 0,
     facing, mode: flying ? Mode.Flight : Mode.Ground, stamina: 100, exhausted: 0,
-    mantle: "", attackTime: 0, attackCombo: 0, downTime: 0, hp: 1, maxHp: 1, level: 1, xp: 0, mantleAwakened: false, abilityCooldown: 0,
-    technique: defaultTechniqueFor(p.look.classId), guarding: false, classCharge: 0, classCooldown: 0,
+    mantle: "", attackTime: 0, attackCombo: 0, downTime: 0, hp: 1, maxHp: 1, level: 1, xp: 0, mantleAwakened: false,
+    abilityCooldown: 0, ability2Cooldown: 0, exploreCooldown: 0, ultCharge: 0, giant: false,
+    technique: defaultTechniqueFor(p.look.classId), mantlePath: "", questStep: 2,
+    guarding: false, classCharge: 0, classCooldown: 0,
     party: "", reviveProgress: 0,
   };
   p.rig.update(view, dt, world);

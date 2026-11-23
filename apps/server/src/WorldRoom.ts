@@ -1,6 +1,6 @@
 import { ServerError, matchMaker, type Client } from "colyseus";
 import {
-  COLOSSUS, MANTLE_SKILLS, MANTLES, SHRINE, WORLD_ROOM_CAPACITY, getWorld,
+  COLOSSUS, MANTLE_SKILLS, MANTLES, ORIGIN_QUESTS, SHRINE, WORLD_ROOM_CAPACITY, getWorld,
 } from "@worlds-edge/shared";
 import type { StoredCharacter } from "./db.ts";
 import { WORLD_SPAWNS } from "./enemies.ts";
@@ -39,18 +39,39 @@ export class WorldRoom extends GameRoom {
   }
 
   protected onInteract(sid: string, p: Player) {
+    const q = ORIGIN_QUESTS[p.origin];
+    if (q && p.questStep === 0 && Math.hypot(p.x - q.target.x, p.z - q.target.z) < q.target.radius && Math.abs(p.y - q.target.y) < 6) {
+      p.questStep = 1;
+      this.fx({ t: "ring", x: q.target.x, y: q.target.y, z: q.target.z, r: 5, kind: "shrine" });
+      this.notify(sid, `${q.title}: recovered! Return to the training-yard shrine (E).`);
+      void this.save(sid);
+      return;
+    }
     if (Math.hypot(p.x - SHRINE.x, p.z - SHRINE.z) < SHRINE.radius && Math.abs(p.y - SHRINE.y) < 4) this.awaken(sid, p);
     else if (Math.hypot(p.x - COLOSSUS.gate.x, p.z - COLOSSUS.gate.z) < COLOSSUS.gate.radius && Math.abs(p.y - COLOSSUS.gate.y) < 6) void this.startReadyCheck(sid);
   }
 
   private awaken(sid: string, p: Player) {
     const mantle = MANTLES.find((m) => m.id === p.mantle)?.name ?? "Your";
-    if (p.mantleAwakened) { this.notify(sid, `Your ${mantle} mantle is already awake.`); return; }
-    p.mantleAwakened = 1;
-    this.fx({ t: "ring", x: SHRINE.x, y: SHRINE.y, z: SHRINE.z, r: 8, kind: "shrine" });
-    const skill = MANTLE_SKILLS[p.mantle];
-    this.notify(sid, `The ${mantle} mantle awakens. Press 1 for ${skill?.name ?? "your mantle skill"}.`);
-    void this.save(sid);
+    const q = ORIGIN_QUESTS[p.origin];
+    let changed = false;
+    if (!p.mantleAwakened) {
+      p.mantleAwakened = 1;
+      this.fx({ t: "ring", x: SHRINE.x, y: SHRINE.y, z: SHRINE.z, r: 8, kind: "shrine" });
+      const skill = MANTLE_SKILLS[p.mantle];
+      this.notify(sid, `The ${mantle} mantle awakens. Press 1 for ${skill?.name ?? "your mantle skill"}.`);
+      changed = true;
+    } else if (!q || p.questStep !== 1) {
+      this.notify(sid, `Your ${mantle} mantle is already awake.`);
+    }
+    if (q && p.questStep === 1) {
+      p.questStep = 2;
+      this.awardXp(sid, q.xp);
+      this.fx({ t: "ring", x: SHRINE.x, y: SHRINE.y, z: SHRINE.z, r: 9, kind: "shrine" });
+      this.notify(sid, `Quest complete: ${q.title}! Earned ${q.reward}.`);
+      changed = true;
+    }
+    if (changed) void this.save(sid);
   }
 
   // --- The Colossus gate: ready check, then a private dungeon for the party -------------

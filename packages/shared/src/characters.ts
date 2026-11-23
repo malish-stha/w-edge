@@ -50,6 +50,7 @@ export interface CharacterSummary extends CharacterDraft {
   level: number;
   technique: string;
   mantlePath: string;
+  questStep: number;
   updatedAt: string;
 }
 

@@ -16,6 +16,9 @@ export class Input {
   private dodgeQueued = false;
   private attackQueued = false;
   private abilityQueued = false;
+  private ability2Queued = false;
+  private ability3Queued = false;
+  private ability4Queued = false;
   private interactQueued = false;
   private secondaryQueued = false;
   private mouseDown = false;
@@ -33,6 +36,9 @@ export class Input {
       if (e.code === "Space") this.jumpQueued = true;
       if (e.code === "KeyQ") this.dodgeQueued = true;
       if (e.code === "Digit1") this.abilityQueued = true;
+      if (e.code === "Digit2") this.ability2Queued = true;
+      if (e.code === "Digit3") this.ability3Queued = true;
+      if (e.code === "Digit4") this.ability4Queued = true;
       if (e.code === "KeyE") this.interactQueued = true;
       // Test mode has no mouse capture: F attacks, R triggers secondary mechanic.
       if (e.code === "KeyF" && this.forceActive) this.attackQueued = true;
@@ -40,10 +46,10 @@ export class Input {
       this.keys.add(e.code);
       this.emit(e.code);
       // Keep the page from scrolling or the browser from acting on game keys.
-      if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "KeyR", "KeyK", "Digit1", "ShiftLeft"].includes(e.code)) {
-        e.preventDefault();
-      }
-    });
+        if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "KeyR", "KeyK", "Digit1", "Digit2", "Digit3", "Digit4", "ShiftLeft"].includes(e.code)) {
+          e.preventDefault();
+        }
+      });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
     window.addEventListener("blur", () => { this.keys.clear(); this.mouseDown = false; this.secondaryDown = false; });
 
@@ -78,7 +84,7 @@ export class Input {
   lock() {
     if (document.pointerLockElement !== this.canvas) {
       const request = this.canvas.requestPointerLock() as unknown;
-      if (request instanceof Promise) request.catch(() => {});
+      if (request instanceof Promise) request.catch(() => { });
     }
   }
 
@@ -111,6 +117,9 @@ export class Input {
     if (this.dodgeQueued) buttons |= Buttons.DodgePressed;
     if (this.attackQueued || this.mouseDown) buttons |= Buttons.AttackPressed;
     if (this.abilityQueued) buttons |= Buttons.Ability1Pressed;
+    if (this.ability2Queued) buttons |= Buttons.Ability2Pressed;
+    if (this.ability3Queued) buttons |= Buttons.Ability3Pressed;
+    if (this.ability4Queued) buttons |= Buttons.Ability4Pressed;
     if (this.interactQueued) buttons |= Buttons.InteractPressed;
     if (this.held("KeyE")) buttons |= Buttons.InteractHeld;
     if (this.secondaryQueued) buttons |= Buttons.SecondaryPressed;
@@ -127,6 +136,9 @@ export class Input {
     this.dodgeQueued = false;
     this.attackQueued = false;
     this.abilityQueued = false;
+    this.ability2Queued = false;
+    this.ability3Queued = false;
+    this.ability4Queued = false;
     this.interactQueued = false;
     this.secondaryQueued = false;
   }

@@ -227,6 +227,9 @@ export class CharacterRig {
     const speed = Math.hypot(p.vx, p.vy, p.vz);
 
     this.root.position.set(p.x, p.y, p.z);
+    const targetScale = p.giant ? 1.85 : 1;
+    const sc = damp(this.root.scaling.x, targetScale, 8, dt);
+    this.root.scaling.set(sc, sc, sc);
     this.facing += shortestAngle(this.facing, p.facing) * (1 - Math.exp(-12 * dt));
     this.root.rotation.y = this.facing;
 

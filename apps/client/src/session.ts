@@ -2,7 +2,7 @@ import { Callbacks, Client, Predict, type Room } from "@colyseus/sdk";
 import type { CharacterLook } from "./render/character.ts";
 import {
   PLAYER_MAX_HP, ROOM_WORLD, STEP_SECONDS,
-  createMoveState, defaultTechniqueFor, getColossusArena, getWorld, stepMovement,
+  createMoveState, defaultMantlePathFor, defaultTechniqueFor, getColossusArena, getWorld, stepMovement,
   type Fx, type MoveInput, type MoveState, type World,
 } from "@worlds-edge/shared";
 
@@ -29,7 +29,13 @@ export interface PlayerView extends CharacterLook {
   xp: number;
   mantleAwakened: boolean;
   abilityCooldown: number;
+  ability2Cooldown: number;
+  exploreCooldown: number;
+  ultCharge: number;
+  giant: boolean;
   technique: string;
+  mantlePath: string;
+  questStep: number;
   guarding: boolean;
   classCharge: number;
   classCooldown: number;
@@ -95,7 +101,7 @@ export interface Session extends SessionEvents {
 const MOVE_FIELDS = [
   "x", "y", "z", "vx", "vy", "vz", "mode", "stamina", "exhausted", "facing",
   "dodgeTime", "dodgeCooldown", "dodgeX", "dodgeZ", "safeX", "safeY", "safeZ",
-  "attackTime", "attackCooldown", "attackCombo", "comboWindow", "downTime",
+  "attackTime", "attackCooldown", "attackCombo", "comboWindow", "downTime", "level",
 ] as const satisfies readonly (keyof MoveState)[];
 
 function copyMove(from: MoveState, to: MoveState) {
@@ -140,8 +146,10 @@ export class OfflineSession implements Session {
       vx: s.vx, vy: s.vy, vz: s.vz,
       facing: s.facing, mode: s.mode, stamina: s.stamina, exhausted: s.exhausted,
       attackTime: s.attackTime, attackCombo: s.attackCombo, downTime: 0,
-      hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, level: 1, xp: 0, mantleAwakened: false, abilityCooldown: 0,
-      technique: defaultTechniqueFor(this.look.classId), guarding: false, classCharge: 0, classCooldown: 0,
+      hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, level: 1, xp: 0, mantleAwakened: false,
+      abilityCooldown: 0, ability2Cooldown: 0, exploreCooldown: 0, ultCharge: 0, giant: false,
+      technique: defaultTechniqueFor(this.look.classId), mantlePath: defaultMantlePathFor(this.look.mantle), questStep: 2,
+      guarding: false, classCharge: 0, classCooldown: 0,
       party: "", reviveProgress: 0,
     };
   }
@@ -270,7 +278,13 @@ export class OnlineSession implements Session {
       attackTime: logic.attackTime, attackCombo: logic.attackCombo, downTime: logic.downTime,
       hp: p.hp, maxHp: p.maxHp, level: p.level, xp: p.xp, mantleAwakened: p.mantleAwakened === 1,
       abilityCooldown: p.abilityCooldown ?? 0,
+      ability2Cooldown: p.ability2Cooldown ?? 0,
+      exploreCooldown: p.exploreCooldown ?? 0,
+      ultCharge: p.ultCharge ?? 0,
+      giant: p.giant === 1,
       technique: p.technique || defaultTechniqueFor(p.classId),
+      mantlePath: p.mantlePath || defaultMantlePathFor(p.mantle),
+      questStep: p.questStep ?? 0,
       guarding: p.guarding === 1,
       classCharge: p.classCharge ?? 0,
       classCooldown: p.classCooldown ?? 0,

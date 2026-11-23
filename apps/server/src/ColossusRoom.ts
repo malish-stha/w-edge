@@ -132,6 +132,7 @@ export class ColossusRoom extends GameRoom {
     const boss = this.state.boss;
     boss.anchorsLeft = Math.max(0, boss.anchorsLeft - 1);
     boss.objective = `Break the anchors (${boss.anchorsLeft} left)`;
+    this.state.players.forEach((p) => { if (p.downTime <= 0) p.ultCharge = Math.min(100, p.ultCharge + 25); });
     if (boss.anchorsLeft > 0) this.notifyAll(`An anchor chain snaps! ${boss.anchorsLeft} left.`);
     else this.startPhase(BossPhase.Wave);
   }

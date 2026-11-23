@@ -1,5 +1,8 @@
 import {
-  BossPhase, CLASS_MECHANICS, ENEMY_KINDS, ENEMY_SIZE, EnemyState, LEVEL_XP, MANTLE_SKILLS, MAX_LEVEL, Mode, RIM_Z, STAMINA_MAX, levelProgress, techniqueDisplay,
+  BossPhase, CLASS_MECHANICS, ENEMY_KINDS, ENEMY_SIZE, EnemyState, LEVEL_XP,
+  MANTLE_EXPLORE, MANTLE_SKILLS, MANTLE_SKILLS_2, MANTLE_ULTIMATES,
+  MAX_LEVEL, Mode, ORIGIN_QUESTS, RIM_Z, SHRINE, STAMINA_MAX, UNLOCK_LEVELS,
+  levelProgress, techniqueDisplay,
 } from "@worlds-edge/shared";
 import type { BossView, EnemyView, PlayerView, Roster } from "./session.ts";
 
@@ -21,6 +24,7 @@ export class Hud {
   private root = $("hud");
   private who = $("who");
   private status = $("status");
+  private quest = $("quest");
   private mode = $("mode");
   private speed = $("speed");
   private altitude = $("altitude");
@@ -37,6 +41,18 @@ export class Hud {
   private abilityName = $("ability-name");
   private abilityState = $("ability-state");
   private abilityCd = $("ability-cd");
+  private ability2 = $("ability2");
+  private ability2Name = $("ability2-name");
+  private ability2State = $("ability2-state");
+  private ability2Cd = $("ability2-cd");
+  private ability3 = $("ability3");
+  private ability3Name = $("ability3-name");
+  private ability3State = $("ability3-state");
+  private ability3Cd = $("ability3-cd");
+  private ability4 = $("ability4");
+  private ability4Name = $("ability4-name");
+  private ability4State = $("ability4-state");
+  private ability4Cd = $("ability4-cd");
   private classKey = $("class-key");
   private className = $("class-name");
   private classState = $("class-state");
@@ -104,14 +120,30 @@ export class Hud {
     this.xpText.textContent = self.level >= MAX_LEVEL ? "max" : `${self.xp}/${LEVEL_XP[self.level]}`;
     this.downed.hidden = self.downTime <= 0;
 
-    // Mantle skill slot.
-    const skill = MANTLE_SKILLS[self.mantle];
-    this.abilityName.textContent = skill?.name ?? "Mantle skill";
+    // Mantle skill slots 1–3 and Ultimate 4.
     const locked = !self.mantleAwakened;
-    this.ability.classList.toggle("locked", locked);
-    this.abilityState.textContent = !online ? "Needs a server" : locked ? "Dormant — visit the shrine"
-      : self.abilityCooldown >= 0.05 ? `${self.abilityCooldown.toFixed(1)} s` : "Ready";
-    this.abilityCd.style.width = locked || !skill ? "0" : `${(1 - self.abilityCooldown / skill.cooldown) * 100}%`;
+    const setSlot = (el: HTMLElement, nameEl: HTMLElement, stateEl: HTMLElement, cdEl: HTMLElement, title: string, cd: number, maxCd: number) => {
+      nameEl.textContent = title;
+      el.classList.toggle("locked", locked);
+      stateEl.textContent = !online ? "Offline" : locked ? "Dormant" : cd >= 0.05 ? `${cd.toFixed(1)} s` : "Ready";
+      cdEl.style.width = locked || !maxCd ? "0" : `${(1 - cd / maxCd) * 100}%`;
+    };
+    const s1 = MANTLE_SKILLS[self.mantle];
+    setSlot(this.ability, this.abilityName, this.abilityState, this.abilityCd, s1?.name ?? "Mantle 1", self.abilityCooldown, s1?.cooldown ?? 8);
+    const s2 = MANTLE_SKILLS_2[self.mantle];
+    const s2Locked = locked || self.level < UNLOCK_LEVELS.secondSkill;
+    this.ability2Name.textContent = s2?.name ?? "Mantle 2";
+    this.ability2.classList.toggle("locked", s2Locked);
+    this.ability2State.textContent = !online ? "Offline" : self.level < UNLOCK_LEVELS.secondSkill ? `Lv ${UNLOCK_LEVELS.secondSkill}` : locked ? "Dormant" : self.ability2Cooldown >= 0.05 ? `${self.ability2Cooldown.toFixed(1)} s` : "Ready";
+    this.ability2Cd.style.width = s2Locked || !s2 ? "0" : `${(1 - self.ability2Cooldown / s2.cooldown) * 100}%`;
+    const s3 = MANTLE_EXPLORE[self.mantle];
+    setSlot(this.ability3, this.ability3Name, this.ability3State, this.ability3Cd, s3?.name ?? "Explore", self.exploreCooldown, s3?.cooldown ?? 6);
+    const ult = MANTLE_ULTIMATES[self.mantle];
+    this.ability4Name.textContent = ult?.name ?? "Ultimate";
+    this.ability4.classList.toggle("locked", locked || self.ultCharge < 100);
+    this.ability4.classList.toggle("ready", !locked && self.ultCharge >= 100);
+    this.ability4State.textContent = !online ? "Offline" : locked ? "Dormant" : self.ultCharge >= 100 ? "READY" : `${Math.floor(self.ultCharge)}%`;
+    this.ability4Cd.style.width = locked ? "0" : `${Math.min(100, self.ultCharge)}%`;
 
     // Class signature mechanic & technique slot.
     const mech = CLASS_MECHANICS[self.classId];
@@ -125,7 +157,24 @@ export class Hud {
     this.classState.textContent = cState;
     this.classCd.style.width = self.classCooldown > 0 ? `${Math.max(0, 1 - self.classCooldown / 2) * 100}%` : "100%";
     const { title } = techniqueDisplay(self.technique, self.classId, self.mantle);
-    this.techLabel.textContent = `[K] ${title}`;
+    this.techLabel.textContent = self.level < UNLOCK_LEVELS.technique ? `[K] Techs unlock Lv ${UNLOCK_LEVELS.technique}` : `[K] ${title}`;
+
+    // Origin quest tracker.
+    const q = ORIGIN_QUESTS[self.origin];
+    if (online && q) {
+      this.quest.hidden = false;
+      if (self.questStep === 0) {
+        const d = Math.round(Math.hypot(self.x - q.target.x, self.z - q.target.z));
+        this.quest.textContent = `${q.title}: ${q.step0Text} (${d} m)`;
+      } else if (self.questStep === 1) {
+        const d = Math.round(Math.hypot(self.x - SHRINE.x, self.z - SHRINE.z));
+        this.quest.textContent = `${q.title}: ${q.step1Text} (${d} m)`;
+      } else {
+        this.quest.textContent = `Charm: ${q.reward}`;
+      }
+    } else {
+      this.quest.hidden = true;
+    }
   }
 
   /** The context prompt near the middle of the screen (key + text), or null to hide it. */

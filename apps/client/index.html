@@ -16,6 +16,7 @@
       <div class="status-card">
         <strong id="who">World's Edge</strong>
         <span id="status">Connecting…</span>
+        <span id="quest" class="quest-line" hidden></span>
       </div>
       <div id="party-frames"></div>
       <div id="boss" hidden>
@@ -35,18 +36,38 @@
         <div class="vital-row"><span>HP</span><div class="bar hp"><div id="hp-fill"></div></div><span id="hp-text">100</span></div>
         <div class="vital-row"><span id="level">Lv 1</span><div class="bar xp"><div id="xp-fill"></div></div><span id="xp-text">0 XP</span></div>
       </div>
-      <div id="class-skill" class="ability class-skill">
-        <kbd id="class-key">RMB</kbd>
-        <span id="class-name">Class skill</span>
-        <span id="class-state">Ready</span>
-        <span id="tech-label" class="tech-sub">[K] Technique</span>
-        <div id="class-cd"></div>
-      </div>
-      <div id="ability" class="ability locked">
-        <kbd>1</kbd>
-        <span id="ability-name">Mantle skill</span>
-        <span id="ability-state">Dormant</span>
-        <div id="ability-cd"></div>
+      <div id="hotbar" class="hotbar">
+        <div id="class-skill" class="ability class-skill">
+          <kbd id="class-key">RMB</kbd>
+          <span id="class-name">Class skill</span>
+          <span id="class-state">Ready</span>
+          <span id="tech-label" class="tech-sub">[K] Build</span>
+          <div id="class-cd"></div>
+        </div>
+        <div id="ability" class="ability locked">
+          <kbd>1</kbd>
+          <span id="ability-name">Mantle 1</span>
+          <span id="ability-state">Dormant</span>
+          <div id="ability-cd"></div>
+        </div>
+        <div id="ability2" class="ability locked">
+          <kbd>2</kbd>
+          <span id="ability2-name">Mantle 2</span>
+          <span id="ability2-state">Dormant</span>
+          <div id="ability2-cd"></div>
+        </div>
+        <div id="ability3" class="ability locked">
+          <kbd>3</kbd>
+          <span id="ability3-name">Explore</span>
+          <span id="ability3-state">Dormant</span>
+          <div id="ability3-cd"></div>
+        </div>
+        <div id="ability4" class="ability locked ult">
+          <kbd>4</kbd>
+          <span id="ability4-name">Ultimate</span>
+          <span id="ability4-state">0%</span>
+          <div id="ability4-cd"></div>
+        </div>
       </div>
       <div class="flight-panel">
         <div class="flight-row">
@@ -68,7 +89,7 @@
           <dt>Q</dt><dd>Dodge</dd>
           <dt>Left mouse</dt><dd>Attack (hold to combo)</dd>
           <dt>Right mouse</dt><dd>Class mechanic · guard / parry / plant arrow</dd>
-          <dt>1 · K</dt><dd>Mantle skill · Signature technique</dd>
+          <dt>1–4 · K</dt><dd>Mantle skills, explore &amp; ultimate · Build &amp; paths</dd>
           <dt>E</dt><dd>Interact · hold to revive</dd>
           <dt>P</dt><dd>Party</dd>
           <dt>Y · N</dt><dd>Accept · decline</dd>
@@ -109,9 +130,12 @@
 
     <div id="tech-panel" class="screen" hidden>
       <div class="card">
-        <h2>Signature technique</h2>
+        <h2>Build &amp; upgrades</h2>
         <p id="tech-intro" class="muted"></p>
+        <h2 class="sub">Signature technique</h2>
         <ul id="tech-list" class="characters"></ul>
+        <h2 class="sub">Mantle upgrade path</h2>
+        <ul id="path-list" class="characters"></ul>
         <div class="actions">
           <button id="tech-close" class="primary">Close</button>
         </div>

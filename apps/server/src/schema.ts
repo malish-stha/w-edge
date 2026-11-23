@@ -44,6 +44,7 @@ export const Player = schema({
   giant: t.uint8(),
   technique: t.string(),
   mantlePath: t.string(),
+  questStep: t.uint8(),
   guarding: t.uint8(),
   classCharge: t.uint8(),
   classCooldown: t.float32(),

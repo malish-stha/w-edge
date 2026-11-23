@@ -103,6 +103,8 @@ export interface MoveState {
   comboWindow: number;
   /** Seconds until a downed player recovers at their safe spot (0 = up). Set by the server. */
   downTime: number;
+  /** Character level (Boost & Dive unlock at level 2). */
+  level: number;
 }
 
 export function createMoveState(spawn: { x: number; y: number; z: number }): MoveState {
@@ -117,6 +119,7 @@ export function createMoveState(spawn: { x: number; y: number; z: number }): Mov
     safeX: spawn.x, safeY: spawn.y, safeZ: spawn.z,
     attackTime: 0, attackCooldown: 0, attackCombo: 0, comboWindow: 0,
     downTime: 0,
+    level: 5,
   };
 }
 
@@ -300,7 +303,7 @@ export function stepMovement(s: MoveState, input: MoveInput, dt: number, world: 
   if ((b & Buttons.SecondaryPressed) !== 0) events.secondary = true;
   if ((b & Buttons.SecondaryHeld) !== 0) events.secondaryHeld = true;
 
-  const canBoost = boostHeld && s.exhausted === 0 && s.stamina > 0;
+  const canBoost = s.level >= 2 && boostHeld && s.exhausted === 0 && s.stamina > 0;
 
   switch (s.mode) {
     case Mode.Ground: {

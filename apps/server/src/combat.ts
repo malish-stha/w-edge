@@ -4,9 +4,12 @@
  * techniques, and mantle skills.
  */
 import {
-  ATTACKS, ENEMY_SIZE, HORIZON_BREAK, MANTLE_EXPLORE, MANTLE_SKILLS, MANTLE_SKILLS_2, Mode, SEA_LEVEL,
+  ATTACKS, ENEMY_SIZE, HORIZON_BREAK, MANTLE_EXPLORE, MANTLE_SKILLS, MANTLE_SKILLS_2, Mode, SEA_LEVEL, UNLOCK_LEVELS,
   raycast, type StepEvents,
 } from "@worlds-edge/shared";
+
+const activeTech = (p: Player) => (p.level >= UNLOCK_LEVELS.technique ? p.technique : "");
+const activePath = (p: Player) => (p.level >= UNLOCK_LEVELS.upgradePath ? p.mantlePath : "");
 import type { Enemies, HitOptions } from "./enemies.ts";
 import type { Host } from "./enemies.ts";
 import type { Player } from "./schema.ts";
@@ -88,13 +91,13 @@ export class Combat {
       parrier = { sid, p };
     } else {
       this.host.state.players.forEach((other, osid) => {
-        if (parrier || other.classId !== "saber" || other.technique !== "cover-parry" || other.downTime > 0) return;
+        if (parrier || other.classId !== "saber" || activeTech(other) !== "cover-parry" || other.downTime > 0) return;
         if ((this.saber.get(osid)?.parryUntil ?? 0) <= now) return;
         if (Math.hypot(other.x - p.x, other.y - p.y, other.z - p.z) <= 8) parrier = { sid: osid, p: other };
       });
     }
     if (parrier) {
-      const cap = parrier.p.technique === "held-edge" ? 2 : 1;
+      const cap = activeTech(parrier.p) === "held-edge" ? 2 : 1;
       parrier.p.classCharge = Math.min(cap, parrier.p.classCharge + 1);
       parrier.p.classCooldown = 0;
       const st = this.saber.get(parrier.sid);
@@ -112,12 +115,12 @@ export class Combat {
     } else {
       this.host.state.players.forEach((other, osid) => {
         if (guardian || other.classId !== "vanguard" || other.guarding !== 1 || other.downTime > 0) return;
-        const cover = other.technique === "bulwark" ? 7.5 : 4.5;
+        const cover = activeTech(other) === "bulwark" ? 7.5 : 4.5;
         if (Math.hypot(other.x - p.x, other.y - p.y, other.z - p.z) <= cover) guardian = { sid: osid, p: other };
       });
     }
     if (guardian) {
-      const cap = guardian.p.technique === "bulwark" ? 2 : 1;
+      const cap = activeTech(guardian.p) === "bulwark" ? 2 : 1;
       guardian.p.classCharge = Math.min(cap, guardian.p.classCharge + 1);
       guardian.p.ultCharge = Math.min(100, guardian.p.ultCharge + 14);
       this.host.fx({ t: "parry", id: guardian.sid, stored: guardian.p.classCharge });
@@ -154,7 +157,8 @@ export class Combat {
         const ay = origin.y + dir.y * dist;
         const az = origin.z + dir.z * dist;
         const list = this.arrows.get(sid) ?? [];
-        const max = p.technique === "net" ? 3 : p.technique === "twin-line" ? 2 : 1;
+        const tech = activeTech(p);
+        const max = tech === "net" ? 3 : tech === "twin-line" ? 2 : 1;
         while (list.length >= max) list.shift();
         list.push({ x: ax, y: ay, z: az, at: now });
         this.arrows.set(sid, list);
@@ -170,14 +174,15 @@ export class Combat {
         if (ev.secondaryHeld || ev.secondary) {
           p.guarding = 1;
           if (!st.wasHeld) {
-            st.plantedUntil = now + (p.technique === "bulwark" ? 4.5 : 2.5);
+            st.plantedUntil = now + (activeTech(p) === "bulwark" ? 4.5 : 2.5);
             this.host.fx({ t: "pin", x: r1(p.x + Math.sin(p.facing) * 1.4), y: r1(p.y + 0.9), z: r1(p.z + Math.cos(p.facing) * 1.4), kind: "shield" });
           }
           st.wasHeld = true;
         } else if (st.wasHeld) {
           st.wasHeld = false;
           p.guarding = 0;
-          if (p.classCharge > 0 || p.technique === "recoil" || p.technique === "launch-pad") {
+          const tech = activeTech(p);
+          if (p.classCharge > 0 || tech === "recoil" || tech === "launch-pad") {
             this.releaseBreakwater(sid, p);
           }
         }
@@ -185,7 +190,6 @@ export class Combat {
       }
       case "lancer": {
         if (!ev.secondary || p.classCooldown > 0) return;
-        // Vault off a nearby enemy or guarding Vanguard's shield.
         const nearEnemy = this.enemies.near(p.x, p.y + 0.8, p.z, 4.5)[0];
         let allyShield = false;
         this.host.state.players.forEach((other, osid) => {
@@ -193,16 +197,17 @@ export class Combat {
             allyShield = true;
           }
         });
-        if (!nearEnemy && !allyShield && p.technique !== "vault") return;
+        const isVault = activeTech(p) === "vault";
+        if (!nearEnemy && !allyShield && !isVault) return;
         p.classCooldown = 2.0;
         p.mode = Mode.Flight;
-        p.vy = Math.max(p.vy, 14) + (p.technique === "vault" ? 4 : 0);
+        p.vy = Math.max(p.vy, 14) + (isVault ? 4 : 0);
         p.vx += Math.sin(yaw) * 6;
         p.vz += Math.cos(yaw) * 6;
         p.stamina = Math.min(100, p.stamina + 25);
         this.host.fx({ t: "vault", id: sid });
         if (nearEnemy) {
-          this.enemies.hit(nearEnemy[0], sid, p.x, p.z, p.technique === "vault" ? 18 : 12, 20);
+          this.enemies.hit(nearEnemy[0], sid, p.x, p.z, isVault ? 18 : 12, 20);
         }
         break;
       }
@@ -213,8 +218,9 @@ export class Combat {
     const charges = Math.max(1, p.classCharge);
     p.classCharge = 0;
     p.guarding = 0;
-    const isDash = p.technique === "riposte-dash";
-    const isHeld = p.technique === "held-edge";
+    const tech = activeTech(p);
+    const isDash = tech === "riposte-dash";
+    const isHeld = tech === "held-edge";
     const mult = isHeld && charges >= 2 ? 2.4 : charges;
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
 
@@ -257,9 +263,10 @@ export class Combat {
     p.classCharge = 0;
     p.classCooldown = 1.6;
     const fx = Math.sin(p.facing), fz = Math.cos(p.facing);
-    const isLaunch = p.technique === "launch-pad";
-    const isRecoil = p.technique === "recoil";
-    const radius = p.technique === "bulwark" ? 7.5 : 6.0;
+    const tech = activeTech(p);
+    const isLaunch = tech === "launch-pad";
+    const isRecoil = tech === "recoil";
+    const radius = tech === "bulwark" ? 7.5 : 6.0;
     const cx = p.x + fx * 2.5, cz = p.z + fz * 2.5;
 
     this.host.fx({ t: "breakwater", x: r1(cx), y: r1(p.y + 0.3), z: r1(cz), r: radius, mantle: p.mantle });
@@ -294,13 +301,13 @@ export class Combat {
     const now = this.host.now();
     if (p && (this.giantUntil.get(attacker) ?? 0) > now) {
       health *= 1.8;
-      guard *= p.mantlePath === "juggernaut" ? 3.0 : 2.5;
+      guard *= activePath(p) === "juggernaut" ? 3.0 : 2.5;
       opts = { ...opts, heavy: true };
     }
     const marks = this.staticMarks.get(id) ?? 0;
     if (marks > 0 && p?.mantle === "storm") {
       this.staticMarks.set(id, marks - 1);
-      health += p.mantlePath === "overcharge" ? 20 : 10;
+      health += activePath(p) === "overcharge" ? 20 : 10;
     }
 
     const res = this.enemies.hit(id, attacker, fromX, fromZ, health, guard, opts);
@@ -333,7 +340,7 @@ export class Combat {
       this.arrows.forEach((list, archerSid) => {
         if (archerSid === attacker || !list.length) return;
         const archer = this.host.state.players.get(archerSid);
-        if (!archer || archer.technique !== "relay") return;
+        if (!archer || activeTech(archer) !== "relay") return;
         const a = list.shift()!;
         if (Math.hypot(a.x - target.x, a.y - ty, a.z - target.z) > 40) return;
         archer.classCharge = list.length;
@@ -395,7 +402,8 @@ export class Combat {
           }
         }
         // Twin Line / Net also link the planted anchors together and damage enemies near the trap.
-        if ((p.technique === "twin-line" || p.technique === "net") && planted.length >= 2) {
+        const tech = activeTech(p);
+        if ((tech === "twin-line" || tech === "net") && planted.length >= 2) {
           for (let i = 0; i + 1 < planted.length; i++) {
             const a = planted[i], b = planted[i + 1];
             pts.push(r1(a.x), r1(a.y), r1(a.z), r1(b.x), r1(b.y), r1(b.z));
@@ -445,7 +453,7 @@ export class Combat {
   /** Steep dives crack armour; Long Dive amplifies steep high-speed slams. */
   private impact(sid: string, p: Player, speed: number, steep: number) {
     const hb = HORIZON_BREAK;
-    const isLong = p.technique === "long-dive";
+    const isLong = activeTech(p) === "long-dive";
     const radius = isLong ? hb.impactRadius + 1.5 : hb.impactRadius;
     const mult = isLong && steep > 0.65 ? 1.45 : 1;
     this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y), z: r1(p.z), r: radius, kind: "impact" });
@@ -470,7 +478,7 @@ export class Combat {
       piercedAny = true;
       this.enemies.hit(id, sid, p.x - p.vx, p.z - p.vz, hb.pierceHealth(speed), hb.pierceGuard);
     }
-    if (piercedAny && p.technique === "skimmer") {
+    if (piercedAny && activeTech(p) === "skimmer") {
       p.stamina = Math.min(100, p.stamina + 15);
       const scale = Math.min(38, speed + 4) / (speed || 1);
       p.vx *= scale; p.vz *= scale;
@@ -486,8 +494,9 @@ export class Combat {
     const fx = Math.sin(p.facing), fz = Math.cos(p.facing);
 
     if (p.mantle === "tide") {
-      const wide = p.mantlePath === "maelstrom";
-      const breaker = p.mantlePath === "breaker";
+      const path = activePath(p);
+      const wide = path === "maelstrom";
+      const breaker = path === "breaker";
       const radius = wide ? 20 : 14;
       const px = p.x + fx * 4, pz = p.z + fz * 4;
       this.host.fx({ t: "ring", x: r1(px), y: r1(p.y), z: r1(pz), r: radius, kind: "tide" });
@@ -503,7 +512,7 @@ export class Combat {
         });
       }
     } else if (p.mantle === "storm") {
-      const jumps = p.mantlePath === "arc" ? 5 : 3;
+      const jumps = activePath(p) === "arc" ? 5 : 3;
       const pts = [r1(p.x), r1(p.y + 1.3), r1(p.z)];
       const struck = new Set<string>();
       let from = { x: p.x, y: p.y + 1.3, z: p.z };
@@ -521,7 +530,7 @@ export class Combat {
       if (struck.size === 0) { p.abilityCooldown = 0.5; return false; }
       this.host.fx({ t: "bolt", pts });
     } else if (p.mantle === "titan") {
-      const guard = p.mantlePath === "juggernaut" ? 85 : 55;
+      const guard = activePath(p) === "juggernaut" ? 85 : 55;
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y), z: r1(p.z), r: 6.5, kind: "titan" });
       for (const [id] of this.enemies.near(p.x, p.y + 0.5, p.z, 6.5)) {
         this.hitWithRelay(id, sid, p.x, p.z, 14, guard, { heavy: true });
@@ -530,17 +539,18 @@ export class Combat {
     return true;
   }
 
-  /** Second mantle combat skill on key 2. */
+  /** Second mantle combat skill on key 2 (unlocks at level 4). */
   ability2(sid: string, p: Player, yaw: number, pitch: number): boolean {
-    if (!p.mantleAwakened || p.ability2Cooldown > 0 || p.downTime > 0) return false;
+    if (!p.mantleAwakened || p.level < UNLOCK_LEVELS.secondSkill || p.ability2Cooldown > 0 || p.downTime > 0) return false;
     const skill = MANTLE_SKILLS_2[p.mantle];
     if (!skill) return false;
     p.ability2Cooldown = skill.cooldown;
     const cp = Math.cos(pitch);
     const dir = { x: Math.sin(yaw) * cp, y: Math.sin(pitch), z: Math.cos(yaw) * cp };
+    const path = activePath(p);
 
     if (p.mantle === "storm") {
-      const addMarks = p.mantlePath === "overcharge" ? 2 : 1;
+      const addMarks = path === "overcharge" ? 2 : 1;
       const pts = [r1(p.x), r1(p.y + 1.2), r1(p.z)];
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y + 0.5), z: r1(p.z), r: 12, kind: "shrine" });
       for (const [id, e] of this.enemies.near(p.x, p.y + 0.8, p.z, 12)) {
@@ -552,7 +562,7 @@ export class Combat {
       if (pts.length > 3) this.host.fx({ t: "bolt", pts });
     } else if (p.mantle === "tide") {
       const fx = Math.sin(yaw), fz = Math.cos(yaw);
-      const guard = p.mantlePath === "breaker" ? 72 : 45;
+      const guard = path === "breaker" ? 72 : 45;
       const toX = p.x + fx * 15, toZ = p.z + fz * 15;
       this.host.fx({ t: "crossfire", pts: [r1(p.x), r1(p.y + 1.1), r1(p.z), r1(toX), r1(p.y + 1.1), r1(toZ)], mantle: "tide" });
       this.host.fx({ t: "ring", x: r1(p.x + fx * 6), y: r1(p.y + 0.3), z: r1(p.z + fz * 6), r: 6, kind: "tide" });
@@ -570,7 +580,7 @@ export class Combat {
       const wall = raycast(this.host.world, origin, dir, 28);
       const dist = Math.min(wall, 24);
       const tx = origin.x + dir.x * dist, ty = origin.y + dir.y * dist, tz = origin.z + dir.z * dist;
-      const radius = p.mantlePath === "catapult" ? 7.0 : 4.5;
+      const radius = path === "catapult" ? 7.0 : 4.5;
       this.host.fx({ t: "shot", from: [r1(origin.x), r1(origin.y), r1(origin.z)], to: [r1(tx), r1(ty), r1(tz)] });
       this.host.fx({ t: "ring", x: r1(tx), y: r1(ty), z: r1(tz), r: radius, kind: "titan" });
       for (const [id] of this.enemies.near(tx, ty, tz, radius)) {
@@ -615,7 +625,7 @@ export class Combat {
       p.vz += fz * 18;
       p.stamina = Math.min(100, p.stamina + 30);
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y), z: r1(p.z), r: 5.5, kind: "titan" });
-      if (p.mantlePath === "catapult") {
+      if (activePath(p) === "catapult") {
         for (const [id] of this.enemies.near(p.x, p.y + 0.5, p.z, 6)) {
           this.hitWithRelay(id, sid, p.x, p.z, 14, 35, { heavy: true });
         }
@@ -631,17 +641,17 @@ export class Combat {
     p.ultCharge = 0;
     const now = this.host.now();
     const fx = Math.sin(p.facing), fz = Math.cos(p.facing);
+    const path = activePath(p);
 
     if (p.mantle === "storm") {
-      // Tempest Crown: detonate all static marks & arc lightning on all allied hits.
-      const duration = p.mantlePath === "arc" ? 12 : 8;
+      const duration = path === "arc" ? 12 : 8;
       this.tempestUntil.set(sid, now + duration);
       const pts = [r1(p.x), r1(p.y + 1.5), r1(p.z)];
       const list = this.enemies.near(p.x, p.y + 1, p.z, 28).slice(0, 6);
       for (const [id, e] of list) {
         const marks = this.staticMarks.get(id) ?? 0;
         this.staticMarks.delete(id);
-        const markBonus = marks * (p.mantlePath === "overcharge" ? 36 : 18);
+        const markBonus = marks * (path === "overcharge" ? 36 : 18);
         const ey = e.y + ENEMY_SIZE[e.kind].height / 2;
         pts.push(r1(e.x), r1(ey), r1(e.z));
         this.hitWithRelay(id, sid, p.x, p.z, 55 + markBonus, 35, { heavy: true }, false);
@@ -649,8 +659,7 @@ export class Combat {
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y + 0.5), z: r1(p.z), r: 16, kind: "shrine" });
       if (pts.length > 3) this.host.fx({ t: "bolt", pts });
     } else if (p.mantle === "tide") {
-      // Riptide: huge wave pulls enemies in, heals & launches allies forward.
-      const wide = p.mantlePath === "maelstrom";
+      const wide = path === "maelstrom";
       const radius = wide ? 28 : 20;
       const px = p.x + fx * 8, pz = p.z + fz * 8;
       this.host.fx({ t: "ring", x: r1(px), y: r1(p.y + 0.3), z: r1(pz), r: radius, kind: "tide" });
@@ -668,8 +677,7 @@ export class Combat {
         ally.mode = Mode.Flight;
       });
     } else if (p.mantle === "titan") {
-      // Colossal Form: grow giant, empowering all attacks & delivering an opening quake.
-      const duration = p.mantlePath === "juggernaut" ? 11 : 8;
+      const duration = path === "juggernaut" ? 11 : 8;
       this.giantUntil.set(sid, now + duration);
       p.giant = 1;
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y + 0.3), z: r1(p.z), r: 9.5, kind: "titan" });

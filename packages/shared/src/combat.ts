@@ -372,6 +372,50 @@ export type Fx =
 export const LEVEL_XP = [0, 40, 120, 260, 450];
 export const MAX_LEVEL = LEVEL_XP.length;
 
+export const UNLOCK_LEVELS = {
+  boostDive: 2,
+  technique: 3,
+  secondSkill: 4,
+  upgradePath: 5,
+  colossus: 5,
+} as const;
+
+export interface OriginQuest {
+  title: string;
+  step0Text: string;
+  step1Text: string;
+  reward: string;
+  xp: number;
+  target: { x: number; y: number; z: number; radius: number };
+}
+
+export const ORIGIN_QUESTS: Record<string, OriginQuest> = {
+  harbourfolk: {
+    title: "Chart the Harbour",
+    step0Text: "Recover the flight chart at the eastern dock",
+    step1Text: "Bring the chart to the training-yard shrine",
+    reward: "Harbour Pennant",
+    xp: 45,
+    target: { x: 54, y: 1.2, z: 154, radius: 7 },
+  },
+  skyborn: {
+    title: "Repair the Wind Beacon",
+    step0Text: "Reach the wind beacon on the upper terrace",
+    step1Text: "Return to the training-yard shrine",
+    reward: "Glider Charm",
+    xp: 45,
+    target: { x: 0, y: 44, z: -86, radius: 8 },
+  },
+  stonekin: {
+    title: "Guild Memorial",
+    step0Text: "Retrieve the guild memorial on the quarry terrace",
+    step1Text: "Return the memorial to the training-yard shrine",
+    reward: "Carved Stone Brooch",
+    xp: 45,
+    target: { x: -22, y: 14, z: -76, radius: 7 },
+  },
+};
+
 export function levelForXp(xp: number): number {
   let level = 1;
   for (let i = 0; i < LEVEL_XP.length; i++) if (xp >= LEVEL_XP[i]) level = i + 1;

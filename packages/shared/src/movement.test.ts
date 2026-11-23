@@ -177,3 +177,15 @@ test("simulation is deterministic", () => {
   assert.deepEqual(a, b);
   assert.ok(a.stamina <= STAMINA_MAX);
 });
+
+test("boost and dive unlock at level 2", () => {
+  const s = airborne(50);
+  s.level = 1;
+  run(s, { moveZ: 100, pitch: -0.9, buttons: Buttons.Boost }, 20);
+  assert.equal(s.mode, Mode.Flight);
+  assert.equal(s.stamina, STAMINA_MAX);
+  s.level = 2;
+  run(s, { moveZ: 100, pitch: -0.9, buttons: Buttons.Boost }, 20);
+  assert.equal(s.mode, Mode.Dive);
+  assert.ok(s.stamina < STAMINA_MAX);
+});

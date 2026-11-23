@@ -40,6 +40,7 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS mantle_awakened BOOLEAN NOT NULL
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS colossus_clears INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS technique TEXT NOT NULL DEFAULT '';
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS mantle_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS quest_step INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS dungeon_clears (
   run_id TEXT NOT NULL,
   character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
@@ -114,6 +115,7 @@ interface CharacterRow {
   mantle_awakened: boolean;
   technique: string;
   mantle_path: string;
+  quest_step: number;
   pos_x: number | null;
   pos_y: number | null;
   pos_z: number | null;
@@ -134,6 +136,7 @@ export interface Progress {
   mantleAwakened: boolean;
   technique: string;
   mantlePath: string;
+  questStep: number;
 }
 
 function toCharacter(r: CharacterRow): StoredCharacter {
@@ -152,6 +155,7 @@ function toCharacter(r: CharacterRow): StoredCharacter {
     mantleAwakened: r.mantle_awakened,
     technique: r.technique || defaultTechniqueFor(classId),
     mantlePath: r.mantle_path || defaultMantlePathFor(mantle),
+    questStep: r.quest_step ?? 0,
     updatedAt: new Date(r.updated_at).toISOString(),
     position: r.pos_x === null || r.pos_y === null || r.pos_z === null ? null : { x: r.pos_x, y: r.pos_y, z: r.pos_z },
   };
@@ -232,9 +236,9 @@ export class Store {
 
   async saveProgress(id: number, p: Progress): Promise<void> {
     await this.sql.query(
-      `UPDATE characters SET pos_x = $2, pos_y = $3, pos_z = $4, xp = $5, level = $6, mantle_awakened = $7, technique = $8, mantle_path = $9, updated_at = now()
+      `UPDATE characters SET pos_x = $2, pos_y = $3, pos_z = $4, xp = $5, level = $6, mantle_awakened = $7, technique = $8, mantle_path = $9, quest_step = $10, updated_at = now()
        WHERE id = $1`,
-      [id, p.x, p.y, p.z, p.xp, p.level, p.mantleAwakened, p.technique, p.mantlePath],
+      [id, p.x, p.y, p.z, p.xp, p.level, p.mantleAwakened, p.technique, p.mantlePath, p.questStep],
     );
   }
 }

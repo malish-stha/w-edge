@@ -269,68 +269,6 @@ body {
   flex: 1;
 }
 
-.enemy-bar.marked small {
-  color: var(--accent);
-  font-weight: 700;
-}
-
-#lock-reticle {
-  position: absolute;
-  width: 34px;
-  height: 34px;
-  transform: translate(-50%, -50%);
-  border: 2px solid var(--accent);
-  border-radius: 50%;
-  pointer-events: none;
-  box-shadow: 0 0 10px rgba(255, 211, 107, 0.7);
-}
-
-#lock-reticle::after {
-  content: "";
-  position: absolute;
-  inset: 9px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-}
-
-.ping-tag {
-  position: absolute;
-  transform: translate(-50%, -100%);
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: var(--panel-solid);
-  border: 1px solid var(--accent);
-  color: #fff;
-  font-size: 11.5px;
-  font-weight: 700;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-.ping-tag.weak {
-  border-color: #ffd36b;
-  color: #ffd36b;
-}
-
-.ping-tag.revive {
-  border-color: #9fe8a8;
-  color: #9fe8a8;
-}
-
-.ping-tag.target {
-  border-color: #ff7a6b;
-  color: #ff7a6b;
-}
-
-.row {
-  display: flex;
-  gap: 8px;
-}
-
-.row input {
-  flex: 1;
-}
-
 .vitals {
   position: absolute;
   bottom: 24px;
@@ -1005,16 +943,23 @@ button:disabled {
 .create {
   max-height: calc(100vh - 32px);
   overflow-y: auto;
-  gap: 8px;
+  padding: 18px 20px;
+  gap: 7px;
 }
 
-/* Keep the create button reachable on short screens. */
+.create .choice {
+  padding: 6px 9px;
+}
+
+/* Keep the create button reachable on short screens without bleeding text underneath. */
 .create .actions {
   position: sticky;
-  bottom: -22px;
-  margin: 0 -22px -22px;
-  padding: 12px 22px 22px;
-  background: linear-gradient(180deg, rgba(16, 28, 44, 0), var(--panel-solid) 30%);
+  bottom: -18px;
+  margin: 4px -20px -18px;
+  padding: 10px 20px 18px;
+  background: var(--panel-solid);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 2;
 }
 
 fieldset {

@@ -240,6 +240,11 @@ export class Combat {
       t: "ring", x: r1(cx), y: r1(p.y + 0.6), z: r1(cz), r: reach * 0.65,
       kind: p.mantle === "tide" ? "tide" : p.mantle === "titan" ? "titan" : "impact",
     });
+    this.host.fx({
+      t: "skill", id: sid, skill: "riposte",
+      x: r1(p.x), y: r1(p.y + 0.8), z: r1(p.z), tx: r1(cx), ty: r1(p.y + 0.8), tz: r1(cz),
+      facing: p.facing, r: reach,
+    });
 
     const hitIds: string[] = [];
     for (const [id] of this.enemies.near(cx, p.y + 0.8, cz, reach)) {
@@ -270,6 +275,11 @@ export class Combat {
     const cx = p.x + fx * 2.5, cz = p.z + fz * 2.5;
 
     this.host.fx({ t: "breakwater", x: r1(cx), y: r1(p.y + 0.3), z: r1(cz), r: radius, mantle: p.mantle });
+    this.host.fx({
+      t: "skill", id: sid, skill: "breakwater",
+      x: r1(p.x), y: r1(p.y + 0.4), z: r1(p.z), tx: r1(cx), ty: r1(p.y + 0.4), tz: r1(cz),
+      facing: p.facing, r: radius,
+    });
 
     // Launch nearby allies toward safety or into an aerial dive.
     const allyRadius = isLaunch ? 8.5 : 6.0;
@@ -500,6 +510,7 @@ export class Combat {
       const radius = wide ? 20 : 14;
       const px = p.x + fx * 4, pz = p.z + fz * 4;
       this.host.fx({ t: "ring", x: r1(px), y: r1(p.y), z: r1(pz), r: radius, kind: "tide" });
+      this.host.fx({ t: "skill", id: sid, skill: "undertow", x: r1(px), y: r1(p.y), z: r1(pz), facing: p.facing, r: radius });
       for (const [id] of this.enemies.near(p.x, p.y + 0.5, p.z, radius)) {
         this.enemies.pull(id, px, pz);
         this.hitWithRelay(id, sid, p.x, p.z, 5, breaker ? 24 : 15);
@@ -529,9 +540,11 @@ export class Combat {
       }
       if (struck.size === 0) { p.abilityCooldown = 0.5; return false; }
       this.host.fx({ t: "bolt", pts });
+      this.host.fx({ t: "skill", id: sid, skill: "chain", x: r1(p.x), y: r1(p.y + 1.1), z: r1(p.z), tx: r1(from.x), ty: r1(from.y), tz: r1(from.z), facing: p.facing, r: 8 });
     } else if (p.mantle === "titan") {
       const guard = activePath(p) === "juggernaut" ? 85 : 55;
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y), z: r1(p.z), r: 6.5, kind: "titan" });
+      this.host.fx({ t: "skill", id: sid, skill: "slam", x: r1(p.x), y: r1(p.y), z: r1(p.z), facing: p.facing, r: 6.5 });
       for (const [id] of this.enemies.near(p.x, p.y + 0.5, p.z, 6.5)) {
         this.hitWithRelay(id, sid, p.x, p.z, 14, guard, { heavy: true });
       }
@@ -553,6 +566,7 @@ export class Combat {
       const addMarks = path === "overcharge" ? 2 : 1;
       const pts = [r1(p.x), r1(p.y + 1.2), r1(p.z)];
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y + 0.5), z: r1(p.z), r: 12, kind: "shrine" });
+      this.host.fx({ t: "skill", id: sid, skill: "static", x: r1(p.x), y: r1(p.y + 0.9), z: r1(p.z), facing: p.facing, r: 12 });
       for (const [id, e] of this.enemies.near(p.x, p.y + 0.8, p.z, 12)) {
         this.staticMarks.set(id, Math.min(4, (this.staticMarks.get(id) ?? 0) + addMarks));
         const ey = e.y + ENEMY_SIZE[e.kind].height / 2;
@@ -566,6 +580,7 @@ export class Combat {
       const toX = p.x + fx * 15, toZ = p.z + fz * 15;
       this.host.fx({ t: "crossfire", pts: [r1(p.x), r1(p.y + 1.1), r1(p.z), r1(toX), r1(p.y + 1.1), r1(toZ)], mantle: "tide" });
       this.host.fx({ t: "ring", x: r1(p.x + fx * 6), y: r1(p.y + 0.3), z: r1(p.z + fz * 6), r: 6, kind: "tide" });
+      this.host.fx({ t: "skill", id: sid, skill: "surge", x: r1(p.x), y: r1(p.y + 1.1), z: r1(p.z), tx: r1(toX), ty: r1(p.y + 1.1), tz: r1(toZ), facing: yaw, r: 7.5 });
       for (const [id] of this.enemies.near(p.x + fx * 7, p.y + 0.8, p.z + fz * 7, 7.5)) {
         this.enemies.pull(id, toX, toZ);
         this.hitWithRelay(id, sid, p.x, p.z, 18, guard, { heavy: true });
@@ -582,6 +597,7 @@ export class Combat {
       const tx = origin.x + dir.x * dist, ty = origin.y + dir.y * dist, tz = origin.z + dir.z * dist;
       const radius = path === "catapult" ? 7.0 : 4.5;
       this.host.fx({ t: "boulder", from: [r1(origin.x), r1(origin.y), r1(origin.z)], to: [r1(tx), r1(ty), r1(tz)], r: radius });
+      this.host.fx({ t: "skill", id: sid, skill: "hurl", x: r1(origin.x), y: r1(origin.y), z: r1(origin.z), tx: r1(tx), ty: r1(ty), tz: r1(tz), facing: yaw, r: radius });
       for (const [id] of this.enemies.near(tx, ty, tz, radius)) {
         this.hitWithRelay(id, sid, p.x, p.z, 26, 45, { heavy: true });
       }
@@ -600,6 +616,7 @@ export class Combat {
     if (p.mantle === "storm") {
       // Updraft: lift player and nearby allies into flight.
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y), z: r1(p.z), r: 7, kind: "shrine" });
+      this.host.fx({ t: "skill", id: sid, skill: "updraft", x: r1(p.x), y: r1(p.y), z: r1(p.z), facing: yaw, r: 7 });
       this.host.state.players.forEach((ally) => {
         if (ally.downTime > 0 || Math.hypot(ally.x - p.x, ally.y - p.y, ally.z - p.z) > 7) return;
         ally.mode = Mode.Flight;
@@ -616,6 +633,7 @@ export class Combat {
       p.vy = Math.max(p.vy, onWater ? 4 : 6);
       p.stamina = Math.min(100, p.stamina + 35);
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y), z: r1(p.z), r: 5, kind: "tide" });
+      this.host.fx({ t: "skill", id: sid, skill: "surface", x: r1(p.x), y: r1(p.y), z: r1(p.z), facing: yaw, r: 5 });
     } else if (p.mantle === "titan") {
       // Peak Leap: giant bound across cliffs.
       p.mode = Mode.Flight;
@@ -624,6 +642,7 @@ export class Combat {
       p.vz += fz * 18;
       p.stamina = Math.min(100, p.stamina + 30);
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y), z: r1(p.z), r: 5.5, kind: "titan" });
+      this.host.fx({ t: "skill", id: sid, skill: "leap", x: r1(p.x), y: r1(p.y), z: r1(p.z), facing: yaw, r: 5.5 });
       if (activePath(p) === "catapult") {
         for (const [id] of this.enemies.near(p.x, p.y + 0.5, p.z, 6)) {
           this.hitWithRelay(id, sid, p.x, p.z, 14, 35, { heavy: true });
@@ -656,12 +675,14 @@ export class Combat {
         this.hitWithRelay(id, sid, p.x, p.z, 55 + markBonus, 35, { heavy: true }, false);
       }
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y + 0.5), z: r1(p.z), r: 16, kind: "shrine" });
+      this.host.fx({ t: "skill", id: sid, skill: "tempest", x: r1(p.x), y: r1(p.y), z: r1(p.z), facing: p.facing, r: 16 });
       if (pts.length > 3) this.host.fx({ t: "bolt", pts });
     } else if (p.mantle === "tide") {
       const wide = path === "maelstrom";
       const radius = wide ? 28 : 20;
       const px = p.x + fx * 8, pz = p.z + fz * 8;
       this.host.fx({ t: "ring", x: r1(px), y: r1(p.y + 0.3), z: r1(pz), r: radius, kind: "tide" });
+      this.host.fx({ t: "skill", id: sid, skill: "riptide", x: r1(p.x), y: r1(p.y), z: r1(p.z), tx: r1(px), ty: r1(p.y), tz: r1(pz), facing: p.facing, r: radius });
       for (const [id] of this.enemies.near(p.x, p.y + 1, p.z, radius)) {
         this.enemies.pull(id, px, pz);
         this.hitWithRelay(id, sid, p.x, p.z, 45, 55, { heavy: true }, false);
@@ -680,6 +701,7 @@ export class Combat {
       this.giantUntil.set(sid, now + duration);
       p.giant = 1;
       this.host.fx({ t: "ring", x: r1(p.x), y: r1(p.y + 0.3), z: r1(p.z), r: 9.5, kind: "titan" });
+      this.host.fx({ t: "skill", id: sid, skill: "colossal", x: r1(p.x), y: r1(p.y), z: r1(p.z), facing: p.facing, r: 9.5 });
       for (const [id] of this.enemies.near(p.x, p.y + 1, p.z, 9.5)) {
         this.hitWithRelay(id, sid, p.x, p.z, 48, 85, { heavy: true }, false);
       }

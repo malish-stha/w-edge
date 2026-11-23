@@ -129,6 +129,9 @@ let techPanelOpen = false;
 let lockedEnemyId: string | null = null;
 let onlinePlayersList: OnlinePlayerInfo[] = [];
 let pingDownAt = 0;
+let prevSelfPos: { x: number; y: number; z: number } | null = null;
+let prevSelfTpCd = 0;
+let lastLocalTpAt = 0;
 
 function clearRigs() {
   for (const rig of rigs.values()) rig.dispose();
@@ -139,6 +142,8 @@ function clearRigs() {
   colossusRig = null;
   effects.clear();
   playerPos.clear();
+  prevSelfPos = null;
+  prevSelfTpCd = 0;
 }
 
 /** Turn the server's effect batch into visuals and HUD feedback. */
@@ -181,6 +186,22 @@ function handleFx(list: Fx[]) {
         break;
       }
       case "boulder": effects.boulder(f.from, f.to, f.r); break;
+      case "teleport":
+        if (f.id !== selfId || performance.now() - lastLocalTpAt > 600) {
+          effects.teleport(f.from, f.to, f.mantle);
+        }
+        break;
+      case "skill": {
+        rigs.get(f.id)?.triggerSkill(f.skill);
+        effects.skillFx(f);
+        if (f.id === selfId) {
+          const heavy = f.skill === "riptide" || f.skill === "tempest" || f.skill === "colossal";
+          const med = f.skill === "slam" || f.skill === "breakwater" || f.skill === "riposte" || f.skill === "surge";
+          if (heavy) follow.punch(0.32);
+          else if (med) follow.punch(0.18);
+        }
+        break;
+      }
     }
   }
 }
@@ -767,7 +788,7 @@ function frameWorld(now: number, dt: number) {
     let rig = rigs.get(p.id);
     if (rig && rig.key !== lookKey(p)) { rig.dispose(); rig = undefined; }
     if (!rig) { rig = new CharacterRig(scene, p); rigs.set(p.id, rig); }
-    rig.update(p, dt, world, (ev) => effects.swing(ev));
+    rig.update(p, dt, world, (ev) => effects.swing(ev), (ev) => effects.flightFx(ev));
   }
   for (const [id, rig] of rigs) if (!seen.has(id)) { rig.dispose(); rigs.delete(id); }
   for (const p of players) playerPos.set(p.id, { x: p.x, y: p.y, z: p.z });
@@ -821,6 +842,16 @@ function frameWorld(now: number, dt: number) {
         lockedEnemyId = null;
       }
     }
+    const selfNow = s.self();
+    if (selfNow) {
+      if (selfNow.teleportCooldown > prevSelfTpCd + 0.5 && prevSelfPos) {
+        effects.teleport([prevSelfPos.x, prevSelfPos.y, prevSelfPos.z], [selfNow.x, selfNow.y, selfNow.z], selfNow.mantle);
+        follow.punch(0.16);
+        lastLocalTpAt = performance.now();
+      }
+      prevSelfTpCd = selfNow.teleportCooldown;
+      prevSelfPos = { x: selfNow.x, y: selfNow.y, z: selfNow.z };
+    }
     const speed = Math.hypot(self.vx, self.vy, self.vz);
     follow.update(self.x, self.y, self.z, input.yaw, input.pitch, input.zoom, speed, dt);
     hud.update(self, s.kind === "online");
@@ -853,7 +884,7 @@ function framePreview(now: number, dt: number) {
     x: PREVIEW_SPOT.x, y: PREVIEW_SPOT.y + (flying ? 1.2 : 0), z: PREVIEW_SPOT.z,
     vx: flying ? Math.sin(facing) * 9 : 0, vy: 0, vz: flying ? Math.cos(facing) * 9 : 0,
     facing, mode: flying ? Mode.Flight : Mode.Ground, stamina: 100, exhausted: 0,
-    mantle: "", attackTime: 0, attackCombo: 0, downTime: 0, hp: 1, maxHp: 1, level: 1, xp: 0, mantleAwakened: false,
+    dodgeTime: 0, teleportCooldown: 0, mantle: "", attackTime: 0, attackCombo: 0, downTime: 0, hp: 1, maxHp: 1, level: 1, xp: 0, mantleAwakened: false,
     abilityCooldown: 0, ability2Cooldown: 0, exploreCooldown: 0, ultCharge: 0, giant: false,
     technique: defaultTechniqueFor(p.look.classId), mantlePath: "", questStep: 2,
     guarding: false, classCharge: 0, classCooldown: 0,

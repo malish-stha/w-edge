@@ -21,6 +21,8 @@ export class Input {
   private ability4Queued = false;
   private interactQueued = false;
   private secondaryQueued = false;
+  private teleportQueued = false;
+  private lastShiftTapAt = 0;
   private mouseDown = false;
   private secondaryDown = false;
   private listeners = new Map<string, Array<() => void>>();
@@ -42,13 +44,22 @@ export class Input {
       if (e.code === "Digit3") this.ability3Queued = true;
       if (e.code === "Digit4") this.ability4Queued = true;
       if (e.code === "KeyE") this.interactQueued = true;
+      if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
+        const now = performance.now();
+        if (now - this.lastShiftTapAt <= 380) {
+          this.teleportQueued = true;
+          this.lastShiftTapAt = 0;
+        } else {
+          this.lastShiftTapAt = now;
+        }
+      }
       // Test mode has no mouse capture: F attacks, R triggers secondary mechanic.
       if (e.code === "KeyF" && this.forceActive) this.attackQueued = true;
       if (e.code === "KeyR" && this.forceActive) this.secondaryQueued = true;
       this.keys.add(e.code);
       this.emit(e.code);
       // Keep the page from scrolling or the browser from acting on game keys.
-      if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "KeyR", "KeyK", "KeyG", "KeyV", "Tab", "Digit1", "Digit2", "Digit3", "Digit4", "ShiftLeft"].includes(e.code)) {
+      if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "KeyR", "KeyK", "KeyG", "KeyV", "Tab", "Digit1", "Digit2", "Digit3", "Digit4", "ShiftLeft", "ShiftRight"].includes(e.code)) {
         e.preventDefault();
       }
     });
@@ -129,6 +140,7 @@ export class Input {
     if (this.held("KeyE")) buttons |= Buttons.InteractHeld;
     if (this.secondaryQueued) buttons |= Buttons.SecondaryPressed;
     if (this.secondaryDown || (this.forceActive && this.held("KeyR"))) buttons |= Buttons.SecondaryHeld;
+    if (this.teleportQueued) buttons |= Buttons.TeleportPressed;
     this.clearPresses();
     const moveZ = (this.held("KeyW", "ArrowUp") ? 100 : 0) - (this.held("KeyS", "ArrowDown") ? 100 : 0);
     const moveX = (this.held("KeyD", "ArrowRight") ? 100 : 0) - (this.held("KeyA", "ArrowLeft") ? 100 : 0);
@@ -146,6 +158,7 @@ export class Input {
     this.ability4Queued = false;
     this.interactQueued = false;
     this.secondaryQueued = false;
+    this.teleportQueued = false;
   }
 
   private wrappedYaw() {

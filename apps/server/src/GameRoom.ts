@@ -85,6 +85,15 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
         for (const input of this.inputs.get(sid)) {
           const wasDown = player.downTime > 0;
           stepMovement(player, input, ctx.dt, this.world, ev);
+          if (ev.teleportedFrom) {
+            const [fx, fy, fz] = ev.teleportedFrom;
+            this.fx({
+              t: "teleport", id: sid,
+              from: [Math.round(fx * 10) / 10, Math.round(fy * 10) / 10, Math.round(fz * 10) / 10],
+              to: [Math.round(player.x * 10) / 10, Math.round(player.y * 10) / 10, Math.round(player.z * 10) / 10],
+              mantle: player.mantle,
+            });
+          }
           if (wasDown && player.downTime === 0) { player.hp = player.maxHp; player.reviveProgress = 0; }
           this.combat.step(sid, player, ctx.dt);
           this.combat.resolve(sid, player, ev, input.yaw, input.pitch);

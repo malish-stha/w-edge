@@ -55,6 +55,9 @@ export const DODGE_COST = 20;
 export const DODGE_SPEED = 24;
 export const DODGE_TIME = 0.22;
 export const DODGE_COOLDOWN = 0.6;
+export const TELEPORT_DISTANCE = 18;
+export const TELEPORT_COST = 25;
+export const TELEPORT_COOLDOWN = 2.5;
 
 // --- World -----------------------------------------------------------------
 export const SEA_LEVEL = 0;

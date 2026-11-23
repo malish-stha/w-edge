@@ -66,12 +66,17 @@ export class ColossusRig {
       line.isPickable = false;
       this.chains.push(line);
     }
-    // The wave: a wall of water across the arena, between the safe heights.
+    // The wave: a layered wall of water across the arena, between the safe heights.
     this.wave = node("wave", 0, 0, 0);
     const w = COLOSSUS.wave;
-    const water = box("waveWater", this.wave, 220, w.bandHigh - w.bandLow, 3, 0, (w.bandLow + w.bandHigh) / 2, 0, mat(scene, "#4aa8d8", { alpha: 0.7, glow: 0.4 }));
+    const h = w.bandHigh - w.bandLow;
+    const midY = (w.bandLow + w.bandHigh) / 2;
+    const deep = box("waveDeep", this.wave, 220, h * 0.58, 3.6, 0, w.bandLow + h * 0.29, 0, mat(scene, "#1f6a96", { alpha: 0.78, glow: 0.2 }));
+    const water = box("waveWater", this.wave, 220, h * 0.52, 2.8, 0, midY + h * 0.24, 0.2, mat(scene, "#4aa8d8", { alpha: 0.62, glow: 0.45 }));
+    deep.visibility = 1;
     water.visibility = 1;
-    box("waveFoam", this.wave, 220, 1.2, 3.6, 0, w.bandHigh + 0.3, 0, mat(scene, "#f2fbff", { glow: 0.8 }));
+    box("waveFoam", this.wave, 220, 0.9, 3.4, 0, w.bandHigh + 0.15, 0.35, mat(scene, "#f2fbff", { alpha: 0.88, glow: 0.75 }));
+    box("waveSpray", this.wave, 220, 0.45, 2.2, 0, w.bandHigh + 0.65, 0.7, mat(scene, "#ffffff", { alpha: 0.55, glow: 0.9 }));
     this.wave.setEnabled(false);
   }
 

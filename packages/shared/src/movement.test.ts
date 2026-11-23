@@ -189,3 +189,31 @@ test("boost and dive unlock at level 2", () => {
   assert.equal(s.mode, Mode.Dive);
   assert.ok(s.stamina < STAMINA_MAX);
 });
+
+test("double-Shift teleport blinks forward, spends stamina, and respects cooldown", () => {
+  const s = settled();
+  const ev = createStepEvents();
+  const startZ = s.z;
+  stepMovement(s, { ...idle, yaw: Math.PI, pitch: -0.2, buttons: Buttons.TeleportPressed }, STEP_SECONDS, world, ev);
+  assert.ok(ev.teleportedFrom !== null, "teleport event fires");
+  assert.ok(startZ - s.z > 10, `expected forward blink > 10m, got ${startZ - s.z}`);
+  assert.ok(s.stamina < STAMINA_MAX, "teleport drains stamina");
+  assert.ok(s.teleportCooldown > 0, "teleport sets cooldown");
+
+  // Immediate second press is ignored until cooldown expires.
+  const midZ = s.z;
+  stepMovement(s, { ...idle, yaw: Math.PI, pitch: 0, buttons: Buttons.TeleportPressed }, STEP_SECONDS, world, ev);
+  assert.equal(ev.teleportedFrom, null);
+  assert.ok(Math.abs(s.z - midZ) < 0.5);
+});
+
+test("teleportation stops cleanly before solid walls", () => {
+  const s = settled();
+  // Face the western training-yard wall at x = -80 from x = -60 (20m away).
+  s.x = -72;
+  s.z = 30;
+  const ev = createStepEvents();
+  stepMovement(s, { ...idle, yaw: -Math.PI / 2, pitch: 0, buttons: Buttons.TeleportPressed }, STEP_SECONDS, world, ev);
+  assert.ok(ev.teleportedFrom !== null);
+  assert.ok(s.x > -80, `player (${s.x}) should stop in front of wall at -80`);
+});

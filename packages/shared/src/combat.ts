@@ -349,6 +349,13 @@ for (const id of Object.keys(MONSTER_MODELS)) {
 
 // --- Effects the server broadcasts (one batch per tick) ------------------------
 
+export type SkillFxKind =
+  | "undertow" | "chain" | "slam"
+  | "surge" | "static" | "hurl"
+  | "surface" | "updraft" | "leap"
+  | "riptide" | "tempest" | "colossal"
+  | "riposte" | "breakwater";
+
 export type Fx =
   /** Damage to an enemy. `weak`: hit a weak point; `blocked`: hit a shield; `broke`: guard broken. */
   | { t: "hit"; x: number; y: number; z: number; n: number; weak?: 1; blocked?: 1; broke?: 1 }
@@ -365,7 +372,9 @@ export type Fx =
   | { t: "crossfire"; pts: number[]; mantle: string }
   | { t: "breakwater"; x: number; y: number; z: number; r: number; mantle: string }
   | { t: "vault"; id: string }
-  | { t: "boulder"; from: [number, number, number]; to: [number, number, number]; r: number };
+  | { t: "boulder"; from: [number, number, number]; to: [number, number, number]; r: number }
+  | { t: "teleport"; id: string; from: [number, number, number]; to: [number, number, number]; mantle: string }
+  | { t: "skill"; id: string; skill: SkillFxKind; x: number; y: number; z: number; tx?: number; ty?: number; tz?: number; facing: number; r: number };
 
 export type PingKind = "ping" | "weak" | "revive" | "target" | "rally";
 

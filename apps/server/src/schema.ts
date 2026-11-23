@@ -25,6 +25,7 @@ export const Player = schema({
   dodgeTime: t.float32(),
   dodgeCooldown: t.float32(),
   dodgeX: t.float32(), dodgeZ: t.float32(),
+  teleportCooldown: t.float32(),
   safeX: t.float32(), safeY: t.float32(), safeZ: t.float32(),
   attackTime: t.float32(),
   attackCooldown: t.float32(),

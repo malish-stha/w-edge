@@ -104,6 +104,7 @@ export class Hud {
     let label = MODE_LABELS[self.mode] ?? "";
     if (self.mode === Mode.Flight && hSpeed < 2 && Math.abs(self.vy) < 2) label = "Hovering";
     if (self.mode === Mode.Flight && hSpeed > 20) label = "Boosting";
+    if (self.teleportCooldown >= 0.05) label += ` · Blink ${self.teleportCooldown.toFixed(1)}s`;
     this.mode.textContent = label;
     this.speed.textContent = `${Math.round(speed)} m/s`;
     this.altitude.textContent = `${Math.round(self.y)} m`;
@@ -238,7 +239,7 @@ export class Hud {
 
   /** Health and guard bars over nearby enemies that are hurt, staggered, fighting, or marked. */
   updateEnemyBars(enemies: EnemyView[], camX: number, camY: number, camZ: number, project: Project, markedId: string | null = null) {
-    const seen = new Set<string>();
+    const candidates: { e: EnemyView; sx: number; sy: number; marked: boolean }[] = [];
     for (const e of enemies) {
       const marked = e.id === markedId;
       const near = Math.hypot(e.x - camX, e.y - camY, e.z - camZ) < (marked ? 90 : 45);
@@ -246,6 +247,18 @@ export class Hud {
       if (!near || !engaged || e.state === EnemyState.Dead) continue;
       const s = project(e.x, e.y + ENEMY_SIZE[e.kind].height + 0.6, e.z);
       if (!s) continue;
+      candidates.push({ e, sx: s.x, sy: s.y, marked });
+    }
+    // Sort bottom-to-top deterministically so nearby bars stack upward cleanly without jitter.
+    candidates.sort((a, b) => (b.sy - a.sy) || a.e.id.localeCompare(b.e.id));
+    const placed: { x: number; y: number }[] = [];
+    const seen = new Set<string>();
+    for (const { e, sx, sy, marked } of candidates) {
+      let y = sy;
+      for (const p of placed) {
+        if (Math.abs(sx - p.x) < 90 && Math.abs(y - p.y) < 27) y = Math.min(y, p.y - 27);
+      }
+      placed.push({ x: sx, y });
       seen.add(e.id);
       let el = this.enemyBars.get(e.id);
       if (!el) {
@@ -262,8 +275,8 @@ export class Hud {
       (el.querySelector(".ehp > div") as HTMLDivElement).style.width = `${(e.hp / e.maxHp) * 100}%`;
       (el.querySelector(".eguard > div") as HTMLDivElement).style.width = `${(staggered ? 1 : e.guard / e.maxGuard) * 100}%`;
       el.classList.toggle("staggered", staggered);
-      el.style.left = `${s.x}px`;
-      el.style.top = `${s.y}px`;
+      el.style.left = `${sx}px`;
+      el.style.top = `${y}px`;
     }
     for (const [id, el] of this.enemyBars) if (!seen.has(id)) { el.remove(); this.enemyBars.delete(id); }
   }

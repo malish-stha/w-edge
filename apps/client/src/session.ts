@@ -20,6 +20,8 @@ export interface PlayerView extends CharacterLook {
   mode: number;
   stamina: number;
   exhausted: number;
+  dodgeTime: number;
+  teleportCooldown: number;
   attackTime: number;
   attackCombo: number;
   downTime: number;
@@ -113,7 +115,7 @@ export interface Session extends SessionEvents {
 
 const MOVE_FIELDS = [
   "x", "y", "z", "vx", "vy", "vz", "mode", "stamina", "exhausted", "facing",
-  "dodgeTime", "dodgeCooldown", "dodgeX", "dodgeZ", "safeX", "safeY", "safeZ",
+  "dodgeTime", "dodgeCooldown", "dodgeX", "dodgeZ", "teleportCooldown", "safeX", "safeY", "safeZ",
   "attackTime", "attackCooldown", "attackCombo", "comboWindow", "downTime", "level",
 ] as const satisfies readonly (keyof MoveState)[];
 
@@ -158,7 +160,7 @@ export class OfflineSession implements Session {
       x: lerp("x"), y: lerp("y"), z: lerp("z"),
       vx: s.vx, vy: s.vy, vz: s.vz,
       facing: s.facing, mode: s.mode, stamina: s.stamina, exhausted: s.exhausted,
-      attackTime: s.attackTime, attackCombo: s.attackCombo, downTime: 0,
+      dodgeTime: s.dodgeTime, teleportCooldown: s.teleportCooldown, attackTime: s.attackTime, attackCombo: s.attackCombo, downTime: 0,
       hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, level: 1, xp: 0, mantleAwakened: false,
       abilityCooldown: 0, ability2Cooldown: 0, exploreCooldown: 0, ultCharge: 0, giant: false,
       technique: defaultTechniqueFor(this.look.classId), mantlePath: defaultMantlePathFor(this.look.mantle), questStep: 2,
@@ -292,7 +294,7 @@ export class OnlineSession implements Session {
       x: this.predict.value(p, "x"), y: this.predict.value(p, "y"), z: this.predict.value(p, "z"),
       vx: logic.vx, vy: logic.vy, vz: logic.vz,
       facing: logic.facing, mode: logic.mode, stamina: logic.stamina, exhausted: logic.exhausted,
-      attackTime: logic.attackTime, attackCombo: logic.attackCombo, downTime: logic.downTime,
+      dodgeTime: logic.dodgeTime, teleportCooldown: logic.teleportCooldown, attackTime: logic.attackTime, attackCombo: logic.attackCombo, downTime: logic.downTime,
       hp: p.hp, maxHp: p.maxHp, level: p.level, xp: p.xp, mantleAwakened: p.mantleAwakened === 1,
       abilityCooldown: p.abilityCooldown ?? 0,
       ability2Cooldown: p.ability2Cooldown ?? 0,

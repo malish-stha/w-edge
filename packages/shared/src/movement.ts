@@ -8,7 +8,7 @@
  * Date/Math.random, no reading anything that isn't in `state`, `input` or the world.
  */
 import * as C from "./constants.ts";
-import type { Box, World } from "./world.ts";
+import { raycast, type Box, type World } from "./world.ts";
 
 export const Mode = { Ground: 0, Air: 1, Flight: 2, Dive: 3 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
@@ -34,6 +34,8 @@ export const Buttons = {
   Ability3Pressed: 4096,
   /** Key 4: mantle ultimate (requires 100% ultimate charge). */
   Ability4Pressed: 8192,
+  /** Double-tap Shift: instant directional blink teleport. */
+  TeleportPressed: 16384,
 } as const;
 
 /** What happened during one step that the server must resolve (hits, skills, interactions). */
@@ -51,14 +53,16 @@ export interface StepEvents {
   impactSpeed: number;
   /** 0 (flat) to 1 (vertical) for that impact. */
   impactSteep: number;
+  /** Origin coordinates if double-Shift teleport fired this step, else null. */
+  teleportedFrom: [number, number, number] | null;
 }
 
 export function createStepEvents(): StepEvents {
-  return { attack: 0, ability1: false, ability2: false, ability3: false, ability4: false, interact: false, secondary: false, secondaryHeld: false, impactSpeed: 0, impactSteep: 0 };
+  return { attack: 0, ability1: false, ability2: false, ability3: false, ability4: false, interact: false, secondary: false, secondaryHeld: false, impactSpeed: 0, impactSteep: 0, teleportedFrom: null };
 }
 
 function clearEvents(e: StepEvents) {
-  e.attack = 0; e.ability1 = false; e.ability2 = false; e.ability3 = false; e.ability4 = false; e.interact = false; e.secondary = false; e.secondaryHeld = false; e.impactSpeed = 0; e.impactSteep = 0;
+  e.attack = 0; e.ability1 = false; e.ability2 = false; e.ability3 = false; e.ability4 = false; e.interact = false; e.secondary = false; e.secondaryHeld = false; e.impactSpeed = 0; e.impactSteep = 0; e.teleportedFrom = null;
 }
 
 /** Shared scratch for callers that don't care about events (client prediction). */
@@ -92,6 +96,7 @@ export interface MoveState {
   dodgeCooldown: number;
   dodgeX: number;
   dodgeZ: number;
+  teleportCooldown: number;
   safeX: number; safeY: number; safeZ: number;
   /** Seconds left in the current attack's active window (drives the swing animation). */
   attackTime: number;
@@ -115,7 +120,7 @@ export function createMoveState(spawn: { x: number; y: number; z: number }): Mov
     stamina: C.STAMINA_MAX,
     exhausted: 0,
     facing: Math.PI,
-    dodgeTime: 0, dodgeCooldown: 0, dodgeX: 0, dodgeZ: 0,
+    dodgeTime: 0, dodgeCooldown: 0, dodgeX: 0, dodgeZ: 0, teleportCooldown: 0,
     safeX: spawn.x, safeY: spawn.y, safeZ: spawn.z,
     attackTime: 0, attackCooldown: 0, attackCombo: 0, comboWindow: 0,
     downTime: 0,
@@ -262,11 +267,34 @@ export function stepMovement(s: MoveState, input: MoveInput, dt: number, world: 
   const descend = (b & Buttons.Descend) !== 0;
   const boostHeld = (b & Buttons.Boost) !== 0;
   const dodgePressed = (b & Buttons.DodgePressed) !== 0;
+  const teleportPressed = (b & Buttons.TeleportPressed) !== 0;
   const [wx, wz] = wishDirection(input);
   const hasWish = wx !== 0 || wz !== 0;
   let drain = 0;
 
   s.dodgeCooldown = Math.max(0, s.dodgeCooldown - dt);
+  s.teleportCooldown = Math.max(0, s.teleportCooldown - dt);
+
+  // Double-Shift Teleportation: instant wall-safe blink along camera aim (or flat ahead when grounded).
+  if (teleportPressed && s.teleportCooldown <= 0 && s.exhausted === 0 && s.stamina >= C.TELEPORT_COST) {
+    const pitch = s.mode === Mode.Ground && input.pitch < 0 && input.pitch > -0.45 ? 0 : input.pitch;
+    const cp = Math.cos(pitch);
+    const dirX = Math.sin(input.yaw) * cp;
+    const dirY = Math.sin(pitch);
+    const dirZ = Math.cos(input.yaw) * cp;
+    const hit = raycast(world, { x: s.x, y: s.y + 1.0, z: s.z }, { x: dirX, y: dirY, z: dirZ }, C.TELEPORT_DISTANCE + 0.8);
+    const travel = Math.max(0, hit - 0.85);
+    if (travel > 1.0) {
+      events.teleportedFrom = [s.x, s.y, s.z];
+      const beforeY = s.y;
+      const th = moveAndCollide(s, dirX * travel, dirY * travel, dirZ * travel, world, true);
+      if (dirY > 0.05 && !th.ground && s.mode === Mode.Ground) s.mode = Mode.Air;
+      else if (s.y > beforeY + 0.6 && s.mode === Mode.Ground) s.mode = Mode.Air;
+      s.facing = input.yaw;
+      s.stamina -= C.TELEPORT_COST;
+      s.teleportCooldown = C.TELEPORT_COOLDOWN;
+    }
+  }
 
   // Dodge: a short burst in the movement direction (or facing), costing stamina.
   if (dodgePressed && s.dodgeCooldown <= 0 && s.stamina >= C.DODGE_COST) {

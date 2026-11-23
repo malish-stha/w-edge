@@ -5,10 +5,11 @@ import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder.js";
 import { CreateCylinder } from "@babylonjs/core/Meshes/Builders/cylinderBuilder.js";
 import { CreateDisc } from "@babylonjs/core/Meshes/Builders/discBuilder.js";
 import { CreatePlane } from "@babylonjs/core/Meshes/Builders/planeBuilder.js";
+import { CreateTorus } from "@babylonjs/core/Meshes/Builders/torusBuilder.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
-import { Mode, groundHeightAt, type World } from "@worlds-edge/shared";
+import { Mode, groundHeightAt, type SkillFxKind, type World } from "@worlds-edge/shared";
 import type { PlayerView } from "../session.ts";
 
 interface MatOptions { alpha?: number; glow?: number; twoSided?: boolean }
@@ -41,6 +42,11 @@ function shortestAngle(from: number, to: number) {
 const damp = (current: number, target: number, rate: number, dt: number) =>
   current + (target - current) * (1 - Math.exp(-rate * dt));
 
+const smooth = (t: number) => {
+  const c = Math.max(0, Math.min(1, t));
+  return c * c * (3 - 2 * c);
+};
+
 export interface CharacterLook {
   classId: string;
   origin: string;
@@ -62,16 +68,24 @@ export interface SwingEvent {
   charged: boolean;
 }
 
+export interface FlightFxEvent {
+  kind: "takeoff" | "dodge" | "streak" | "diveRing" | "cast";
+  x: number; y: number; z: number;
+  vx: number; vy: number; vz: number;
+  facing: number;
+  mantle: string;
+}
+
 /**
- * Low-poly character with articulated weapons: Saber slashes with torso twist
- * & glowing edge, Archer draws bowstring & nocks an arrow in-hand, Lancer
- * thrusts the spear forward & projects a dive cone, Vanguard guards with an
- * angled shield & energy barrier.
+ * Low-poly character with articulated weapons and expressive flight kinematics:
+ * independent head look-ahead, turn banking, takeoff/hover/climb/soar/boost/dive
+ * stances, aerial barrel-roll dodges, and aerial combat/cast poses while flying.
  */
 export class CharacterRig {
   readonly root: TransformNode;
   readonly key: string;
   private body: TransformNode;
+  private head: TransformNode;
   private legL: TransformNode; private legR: TransformNode;
   private armL: TransformNode; private armR: TransformNode;
   private cape: Mesh;
@@ -80,12 +94,33 @@ export class CharacterRig {
   private meshes: Mesh[] = [];
   private nodes: TransformNode[] = [];
   private facing = 0;
+  private prevFacing = 0;
   private pitch = 0;
   private bodyYaw = 0;
+  private roll = 0;
   private walkPhase = 0;
   private time = 0;
   private lastAttackTime = 0;
   private lastCombo = 0;
+  private swingAnim = 0;
+  private swingDur = 0.44;
+  private activeCombo = 1;
+  private combatHold = 0;
+  private lastMode: number = Mode.Ground;
+  private lastDodgeTime = 0;
+  private lastCds: [number, number, number] = [0, 0, 0];
+  private takeoffTime = 0;
+  private blinkTime = 0;
+  private lastTeleportCd = 0;
+  private castTime = 0;
+  private activeSkill: SkillFxKind | null = null;
+  private skillTime = 0;
+  private skillDur = 0.55;
+  private tempestTime = 0;
+  private giantAura: Mesh;
+  private tempestCrown: Mesh;
+  private streakAccum = 0;
+  private diveRingAccum = 0;
   private classId: string;
 
   // Class weapon rigs
@@ -118,6 +153,11 @@ export class CharacterRig {
     this.body.parent = this.root;
     this.body.position.y = 1.0;
 
+    this.head = new TransformNode("headPivot", scene);
+    this.head.parent = this.body;
+    this.head.position.set(0, 0.48, 0);
+    this.nodes.push(this.head);
+
     const part = (mesh: Mesh, parent: TransformNode, x: number, y: number, z: number, m: StandardMaterial) => {
       mesh.parent = parent;
       mesh.position.set(x, y, z);
@@ -129,11 +169,11 @@ export class CharacterRig {
 
     part(CreateBox("torso", { width: 0.62, height: 0.72, depth: 0.36 }, scene), this.body, 0, 0.12, 0, cloth);
     part(CreateBox("belt", { width: 0.64, height: 0.1, depth: 0.38 }, scene), this.body, 0, -0.2, 0, dark);
-    part(CreateBox("head", { size: 0.44 }, scene), this.body, 0, 0.72, 0, skin);
-    part(CreateBox("hair", { width: 0.48, height: 0.18, depth: 0.48 }, scene), this.body, 0, 0.9, -0.02, hair);
-    part(CreateBox("hairBack", { width: 0.48, height: 0.3, depth: 0.1 }, scene), this.body, 0, 0.72, -0.21, hair);
-    part(CreateBox("eyeL", { width: 0.07, height: 0.07, depth: 0.02 }, scene), this.body, -0.1, 0.74, 0.22, dark);
-    part(CreateBox("eyeR", { width: 0.07, height: 0.07, depth: 0.02 }, scene), this.body, 0.1, 0.74, 0.22, dark);
+    part(CreateBox("head", { size: 0.44 }, scene), this.head, 0, 0.24, 0, skin);
+    part(CreateBox("hair", { width: 0.48, height: 0.18, depth: 0.48 }, scene), this.head, 0, 0.42, -0.02, hair);
+    part(CreateBox("hairBack", { width: 0.48, height: 0.3, depth: 0.1 }, scene), this.head, 0, 0.24, -0.21, hair);
+    part(CreateBox("eyeL", { width: 0.07, height: 0.07, depth: 0.02 }, scene), this.head, -0.1, 0.26, 0.22, dark);
+    part(CreateBox("eyeR", { width: 0.07, height: 0.07, depth: 0.02 }, scene), this.head, 0.1, 0.26, 0.22, dark);
 
     const limb = (name: string, x: number, y: number, len: number, w: number, m: StandardMaterial) => {
       const pivot = new TransformNode(name, scene);
@@ -162,7 +202,7 @@ export class CharacterRig {
     switch (look.classId) {
       case "saber": {
         const sword = node("sword", this.armR, 0, -0.62, 0.05);
-        sword.rotation.x = 0.25;
+        sword.rotation.x = 2.25;
         box("blade", sword, 0.06, 1.15, 0.14, 0, 0.7, 0, metal);
         this.swordGlow = box("bladeGlow", sword, 0.1, 1.2, 0.19, 0, 0.72, 0, mat(scene, "#ffd36b", { glow: 1, alpha: 0.55 }));
         this.swordGlow.setEnabled(false);
@@ -172,24 +212,27 @@ export class CharacterRig {
         break;
       }
       case "archer": {
-        // Bow held in left hand; limbs flex & two-segment bowstring pulls back with a nocked arrow.
+        // Longbow held in left hand; limbs flex, two-segment string pulls to cheek anchor, arrow nocks & looses.
         const bow = node("bow", this.armL, 0.04, -0.62, 0.06);
-        box("grip", bow, 0.06, 0.28, 0.07, 0, 0, 0, wood);
-        this.bowLimbU = box("limbU", bow, 0.05, 0.62, 0.055, 0, 0.4, -0.06, wood);
-        this.bowLimbU.rotation.x = -0.28;
-        this.bowLimbL = box("limbL", bow, 0.05, 0.62, 0.055, 0, -0.4, -0.06, wood);
-        this.bowLimbL.rotation.x = 0.28;
+        const tipMat = mat(scene, "#ffd36b", { glow: 0.5 });
+        box("grip", bow, 0.075, 0.3, 0.08, 0, 0, 0, mat(scene, "#b07d4f"));
+        this.bowLimbU = box("limbU", bow, 0.06, 0.74, 0.065, 0, 0.45, -0.06, mat(scene, "#c4925e"));
+        this.bowLimbU.rotation.x = -0.24;
+        box("tipU", this.bowLimbU, 0.07, 0.1, 0.07, 0, 0.36, 0, tipMat);
+        this.bowLimbL = box("limbL", bow, 0.06, 0.74, 0.065, 0, -0.45, -0.06, mat(scene, "#c4925e"));
+        this.bowLimbL.rotation.x = 0.24;
+        box("tipL", this.bowLimbL, 0.07, 0.1, 0.07, 0, -0.36, 0, tipMat);
 
-        const strMat = mat(scene, "#f4f4f4", { glow: 0.35 });
-        this.bowStringU = box("stringU", bow, 0.015, 0.65, 0.015, 0, 0.32, -0.17, strMat);
-        this.bowStringL = box("stringL", bow, 0.015, 0.65, 0.015, 0, -0.32, -0.17, strMat);
+        const strMat = mat(scene, "#ffffff", { glow: 0.7 });
+        this.bowStringU = box("stringU", bow, 0.022, 0.76, 0.022, 0, 0.38, -0.16, strMat);
+        this.bowStringL = box("stringL", bow, 0.022, 0.76, 0.022, 0, -0.38, -0.16, strMat);
 
-        // Nocked 3D arrow (shaft + broadhead + fletching) visible during draw.
+        // Nocked 3D arrow (long shaft + bright broadhead + fletching) visible during nock & draw.
         const arrow = node("nockedArrow", bow, 0, 0, 0.05);
-        box("arrowShaft", arrow, 0.025, 0.025, 0.85, 0, 0, 0.25, wood);
-        const head = part(CreateCylinder("arrowHead", { height: 0.14, diameterTop: 0, diameterBottom: 0.07, tessellation: 4 }, scene), arrow, 0, 0, 0.72, mat(scene, "#ffd36b", { glow: 0.7 }));
+        box("arrowShaft", arrow, 0.032, 0.032, 1.15, 0, 0, 0.38, mat(scene, "#e3c598", { glow: 0.3 }));
+        const head = part(CreateCylinder("arrowHead", { height: 0.18, diameterTop: 0, diameterBottom: 0.1, tessellation: 4 }, scene), arrow, 0, 0, 0.98, mat(scene, "#ffd36b", { glow: 0.95 }));
         head.rotation.x = Math.PI / 2;
-        box("arrowFletch", arrow, 0.08, 0.08, 0.12, 0, 0, -0.15, mat(scene, "#ff6b57", { glow: 0.3 }));
+        box("arrowFletch", arrow, 0.11, 0.11, 0.16, 0, 0, -0.18, mat(scene, "#ff6b57", { glow: 0.6 }));
         arrow.setEnabled(false);
         this.nockedArrow = arrow;
         this.bow = bow;
@@ -237,7 +280,7 @@ export class CharacterRig {
       case "skyborn": {
         const feather = mat(scene, "#f2f4f8");
         for (const [i, x] of [-0.1, 0, 0.1].entries()) {
-          const f = box(`feather${i}`, this.body, 0.05, 0.42 - Math.abs(x), 0.1, x, 1.06, -0.12, feather);
+          const f = box(`feather${i}`, this.head, 0.05, 0.42 - Math.abs(x), 0.1, x, 0.58, -0.12, feather);
           f.rotation.x = -0.5;
           f.rotation.z = -x * 2;
         }
@@ -254,7 +297,7 @@ export class CharacterRig {
           const s = box(`crystalS${side}`, this.body, 0.1, 0.16, 0.1, side * 0.4, 0.5, -0.1, crystal);
           s.rotation.set(-0.4, 0.3, side * 0.9);
         }
-        box("brow", this.body, 0.46, 0.06, 0.06, 0, 0.82, 0.21, mat(scene, "#8a7f74"));
+        box("brow", this.head, 0.46, 0.06, 0.06, 0, 0.34, 0.21, mat(scene, "#8a7f74"));
         break;
       }
       default: {
@@ -273,10 +316,33 @@ export class CharacterRig {
     this.shadow.rotation.x = Math.PI / 2;
     this.shadow.material = mat(scene, "#000000", { alpha: 0.25, glow: 0 });
     this.shadow.isPickable = false;
+
+    this.giantAura = CreateTorus("giantAura", { diameter: 2.0, thickness: 0.12, tessellation: 24 }, scene);
+    this.giantAura.parent = this.root;
+    this.giantAura.position.y = 0.14;
+    this.giantAura.material = mat(scene, "#ff9b3d", { glow: 1, alpha: 0.75 });
+    this.giantAura.isPickable = false;
+    this.giantAura.setEnabled(false);
+
+    this.tempestCrown = CreateTorus("tempestCrown", { diameter: 0.95, thickness: 0.08, tessellation: 16 }, scene);
+    this.tempestCrown.parent = this.head;
+    this.tempestCrown.position.y = 0.75;
+    this.tempestCrown.material = mat(scene, "#9fe4ff", { glow: 1, alpha: 0.85 });
+    this.tempestCrown.isPickable = false;
+    this.tempestCrown.setEnabled(false);
   }
 
-  update(p: PlayerView, dt: number, world: World, onSwing?: (ev: SwingEvent) => void) {
+  /** Play a bespoke full-body animation for a special skill or ultimate. */
+  triggerSkill(skill: SkillFxKind) {
+    this.activeSkill = skill;
+    this.skillDur = skill === "riptide" || skill === "tempest" || skill === "colossal" ? 0.68 : 0.52;
+    this.skillTime = this.skillDur;
+    if (skill === "tempest") this.tempestTime = 8.0;
+  }
+
+  update(p: PlayerView, dt: number, world: World, onSwing?: (ev: SwingEvent) => void, onFlight?: (ev: FlightFxEvent) => void) {
     this.time += dt;
+    const safeDt = Math.max(0.001, dt);
     const hSpeed = Math.hypot(p.vx, p.vz);
     const speed = Math.hypot(p.vx, p.vy, p.vz);
 
@@ -286,22 +352,82 @@ export class CharacterRig {
     this.root.scaling.set(sc, sc, sc);
     this.facing += shortestAngle(this.facing, p.facing) * (1 - Math.exp(-12 * dt));
     this.root.rotation.y = this.facing;
+    const turnRate = shortestAngle(this.prevFacing, p.facing) / safeDt;
+    this.prevFacing = p.facing;
 
-    // Detect newly started attack swing for crisp weapon-arc VFX.
+    const isFlying = p.mode === Mode.Flight || p.mode === Mode.Dive;
+    const wasFlying = this.lastMode === Mode.Flight || this.lastMode === Mode.Dive;
+    if (isFlying && !wasFlying) {
+      this.takeoffTime = 0.42;
+      onFlight?.({ kind: "takeoff", x: p.x, y: p.y + 0.35 * sc, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, facing: p.facing, mantle: p.mantle });
+    }
+    this.takeoffTime = Math.max(0, this.takeoffTime - dt);
+
+    if (p.dodgeTime > 0 && this.lastDodgeTime <= 0) {
+      onFlight?.({ kind: "dodge", x: p.x, y: p.y + 1.0 * sc, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, facing: p.facing, mantle: p.mantle });
+    }
+    this.lastDodgeTime = p.dodgeTime;
+
+    if (p.teleportCooldown > this.lastTeleportCd + 0.5) {
+      this.blinkTime = 0.28;
+    }
+    this.lastTeleportCd = p.teleportCooldown;
+    this.blinkTime = Math.max(0, this.blinkTime - dt);
+
+    const cds: [number, number, number] = [p.abilityCooldown, p.ability2Cooldown, p.exploreCooldown];
+    if (cds.some((c, i) => c > this.lastCds[i] + 0.4)) {
+      this.castTime = 0.36;
+      onFlight?.({ kind: "cast", x: p.x, y: p.y + 1.1 * sc, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, facing: p.facing, mantle: p.mantle });
+    }
+    this.lastCds = cds;
+    this.castTime = Math.max(0, this.castTime - dt);
+    this.skillTime = Math.max(0, this.skillTime - dt);
+    if (this.skillTime <= 0) this.activeSkill = null;
+    this.tempestTime = Math.max(0, this.tempestTime - dt);
+    this.lastMode = p.mode;
+
+    // Emit crisp wingtip streaks & dive pressure rings at speed.
+    if (isFlying && p.downTime <= 0 && (speed >= 17 || p.mode === Mode.Dive)) {
+      this.streakAccum += dt;
+      if (this.streakAccum >= (p.mode === Mode.Dive ? 0.032 : 0.048)) {
+        this.streakAccum = 0;
+        onFlight?.({ kind: "streak", x: p.x, y: p.y + 1.0 * sc, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, facing: this.facing, mantle: p.mantle });
+      }
+      if (p.mode === Mode.Dive) {
+        this.diveRingAccum += dt;
+        if (this.diveRingAccum >= 0.2) {
+          this.diveRingAccum = 0;
+          onFlight?.({ kind: "diveRing", x: p.x, y: p.y + 1.0 * sc, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, facing: this.facing, mantle: p.mantle });
+        }
+      }
+    } else {
+      this.streakAccum = 0;
+      this.diveRingAccum = 0;
+    }
+
+    // Detect newly started attack swing for crisp weapon-arc VFX and full swing curve.
     if (p.attackTime > 0 && (this.lastAttackTime <= 0 || p.attackTime > this.lastAttackTime + 0.05 || p.attackCombo !== this.lastCombo)) {
+      this.swingDur = this.classId === "archer" ? 0.62 : 0.46;
+      this.swingAnim = this.swingDur;
+      this.activeCombo = p.attackCombo || 1;
+      this.combatHold = 0.85;
       onSwing?.({
         classId: this.classId,
-        combo: p.attackCombo || 1,
+        combo: this.activeCombo,
         x: p.x, y: p.y + 1.15 * sc, z: p.z,
         facing: p.facing,
         mantle: p.mantle,
         charged: p.classCharge > 0 || p.giant,
       });
     }
+    this.swingAnim = Math.max(0, this.swingAnim - dt);
+    this.combatHold = Math.max(0, this.combatHold - dt);
     this.lastAttackTime = p.attackTime;
     this.lastCombo = p.attackCombo;
 
-    let bodyPitch = 0, bodyYaw = 0, legSwing = 0, legBack = 0, armSwing = 0, armOut = 0, armForward = 0, capeLift = 0.1, bob = 0;
+    let bodyPitch = 0, bodyYaw = 0, bodyRoll = 0;
+    let legSwing = 0, legBack = 0, legStagger = 0;
+    let armSwing = 0, armOut = 0, armForward = 0, capeLift = 0.1, bob = 0;
     switch (p.mode) {
       case Mode.Ground: {
         this.walkPhase += hSpeed * dt * 1.6;
@@ -309,129 +435,214 @@ export class CharacterRig {
         legSwing = Math.sin(this.walkPhase) * 0.7 * amount;
         armSwing = -legSwing * 0.8;
         bodyPitch = 0.08 * amount;
+        bodyRoll = Math.max(-0.18, Math.min(0.18, -turnRate * 0.04 * amount));
         bob = Math.abs(Math.sin(this.walkPhase)) * 0.06 * amount;
         capeLift = 0.1 + amount * 0.3;
         break;
       }
-      case Mode.Air:
-        legBack = 0.3; armOut = 0.6; capeLift = 0.5;
+      case Mode.Air: {
+        const rising = Math.max(0, Math.min(1, p.vy / 9));
+        const falling = Math.max(0, Math.min(1, -p.vy / 18));
+        bodyPitch = -0.1 * rising + 0.16 * falling;
+        legStagger = 0.42 * rising + 0.25 * falling;
+        legBack = 0.22 * falling;
+        armOut = 0.38 + falling * 0.48;
+        armForward = 0.55 * rising + 0.2 * falling;
+        capeLift = 0.45 + falling * 0.65;
         break;
+      }
       case Mode.Flight: {
         const k = Math.min(1, hSpeed / 15);
-        bodyPitch = k * 1.15 + Math.min(0.35, Math.max(0, (hSpeed - 15) / 50));
-        legBack = 0.15 + k * 0.25;
-        armOut = 0.35 * (1 - k) + 0.1;
-        armForward = -k * 0.4;
-        capeLift = 0.4 + k * 0.9;
-        bob = (1 - k) * Math.sin(this.time * 2.2) * 0.08;
-        legSwing = (1 - k) * Math.sin(this.time * 2.2) * 0.12;
+        const boostK = Math.max(0, Math.min(1, (hSpeed - 17) / 14));
+        const climbK = Math.max(0, Math.min(1, p.vy / 9));
+        const descK = Math.max(0, Math.min(1, -p.vy / 11));
+        const wingBeat = Math.sin(this.time * 8.5);
+        const hoverFloat = Math.sin(this.time * 2.5);
+
+        bodyPitch = 0.14 + k * 0.96 + boostK * 0.22 - climbK * 0.52 - descK * 0.28;
+        bodyRoll = Math.max(-0.58, Math.min(0.58, -turnRate * 0.24));
+        legBack = 0.16 + k * 0.24 - descK * 0.25;
+        legStagger = 0.16 + k * 0.14 + climbK * 0.12;
+        legSwing = (1 - k) * hoverFloat * 0.14 + k * Math.sin(this.time * (3.5 + hSpeed * 0.22)) * 0.07;
+
+        armOut = 0.44 * (1 - k) + 0.28 * k - boostK * 0.14 + descK * 0.5 + climbK * (0.28 + wingBeat * 0.24);
+        armForward = -(k * 0.58 + boostK * 0.34) + climbK * (0.22 - wingBeat * 0.42) + descK * 0.3;
+        armSwing = (1 - k) * hoverFloat * 0.12;
+
+        capeLift = 0.45 + k * 0.78 + boostK * 0.22 + descK * 0.3;
+        bob = (1 - k) * hoverFloat * 0.1;
+
+        if (this.takeoffTime > 0) {
+          const tk = 1 - this.takeoffTime / 0.42;
+          const arc = Math.sin(tk * Math.PI);
+          bodyPitch -= 0.24 * arc;
+          armOut += 0.6 * arc;
+          armForward -= 0.45 * arc;
+          legStagger += 0.45 * arc;
+          capeLift += 0.35 * arc;
+        }
         break;
       }
       case Mode.Dive: {
         const down = Math.atan2(-p.vy, Math.max(0.01, hSpeed));
-        bodyPitch = Math.PI / 2 + down * 0.9;
-        legBack = 0.1;
-        capeLift = 1.4;
+        bodyPitch = Math.PI / 2 + down * 0.88;
+        bodyRoll = Math.max(-0.65, Math.min(0.65, -turnRate * 0.28));
+        legBack = 0.24;
+        legStagger = 0.14;
+        armForward = -0.95;
+        armOut = 0.14;
+        capeLift = 1.48;
         break;
       }
     }
 
-    let armLX = armSwing - armForward * 0.5, armRX = -armSwing - armForward;
+    let armLX = armSwing - armForward * 0.65, armRX = -armSwing - armForward;
+    if (p.mode === Mode.Dive && this.classId === "lancer" && p.attackTime <= 0) armRX = -0.14;
     let armLZ = -armOut, armRZ = armOut;
-    let armRate = 12;
+    let armRate = isFlying ? 10 : 12;
     let bodyY = 1.0 + bob;
 
     // Weapon pose defaults
-    let swordRotX = this.classId === "vanguard" ? 1.9 : 0.25;
+    let swordRotX = this.classId === "vanguard" ? 2.1 : 2.25;
     let swordRotZ = 0;
-    let spearRotX = 0.14;
-    let spearY = -0.62;
-    let bowRotX = 0;
-    let bowRotZ = 0.15;
+    let spearRotX = 0.26;
+    let spearY = -0.44;
+    let bowRotX = 0.52;
+    let bowRotZ = 0.22;
     let bowPull = 0;
     let showArrow = false;
-    let shieldRotY = 0;
+    let shieldRotY = 0.35;
 
-    if (p.attackTime > 0 && p.downTime <= 0) {
-      const a = Math.max(0, Math.min(1, 1 - p.attackTime / 0.22));
-      armRate = 32;
+    // Aerial combat/casting lifts the torso into forward flight poise so attacks aim ahead, not into the ground.
+    const airAiming = this.classId === "archer" && p.classCooldown > 0.1;
+    const isAttacking = this.swingAnim > 0 || p.attackTime > 0;
+    const inCombat = isAttacking || p.guarding || airAiming || this.combatHold > 0;
+    const airCombat = isFlying && p.downTime <= 0 && (inCombat || this.castTime > 0);
+    if (airCombat) {
+      const combatPitch = (this.classId === "archer" && inCombat) ? 0.08 : p.guarding ? 0.28 : 0.36;
+      bodyPitch = Math.min(bodyPitch, combatPitch);
+      legBack = Math.max(legBack, 0.38);
+      legStagger = Math.max(legStagger, 0.36);
+      capeLift = Math.max(capeLift, 0.78);
+    }
+
+    if (this.swingAnim > 0 && p.downTime <= 0) {
+      const s = Math.max(0, Math.min(1, 1 - this.swingAnim / this.swingDur));
+      const combo = this.activeCombo;
+      armRate = 30;
       switch (this.classId) {
-        case "saber": {
-          if (p.attackCombo === 3) {
-            // Heavy overhead cleave
-            bodyYaw = -0.25 + a * 0.4;
-            armRX = -2.85 + a * 2.4;
-            armLX = -2.2 + a * 1.8;
-            armRZ = 0.2;
-            swordRotX = 0.3 + a * 1.35;
+        case "archer": {
+          // True archery: left shoulder aimed straight at target (+bodyYaw = 1.35), bow dead ahead, right hand touches string & draws straight back to jaw.
+          bodyYaw = 1.35;
+          armLX = -0.12;
+          armLZ = -1.48;
+          bowRotX = Math.PI / 2;
+          bowRotZ = Math.PI / 2 - 0.16;
+          if (!isFlying) { legSwing = -0.22; bob += 0.02; }
+          if (s < 0.2) {
+            // Right hand reaches across chest right onto the bowstring/nock
+            const t = smooth(s / 0.2);
+            bowPull = 0;
+            showArrow = true;
+            armRX = -1.45;
+            armRZ = -1.05 - t * 0.45;
+          } else if (s < 0.72) {
+            // Taut draw: right hand pulls string & nock straight back along arrow line to jaw anchor
+            const t = smooth((s - 0.2) / 0.52);
+            bowPull = t;
+            showArrow = true;
+            armRX = -1.45 + t * 0.48;
+            armRZ = -1.5 + t * 0.34;
+            armRate = 38;
           } else {
-            // Alternating horizontal/diagonal sword cuts
-            const dir = p.attackCombo === 2 ? -1 : 1;
-            bodyYaw = dir * (0.45 - a * 0.95);
-            armRX = -1.65 + a * 0.4;
-            armRZ = dir * (1.05 - a * 2.1);
-            swordRotX = 1.35;
+            // Arrow loosed: string twangs and draw hand snaps into follow-through
+            const t = (s - 0.72) / 0.28;
+            bowPull = Math.max(0, (1 - t * 3.5) * Math.cos(t * 26) * 0.42);
+            showArrow = false;
+            armRX = -0.97 + smooth(Math.min(1, t * 2)) * 0.35;
+            armRZ = -1.16 + smooth(Math.min(1, t * 2)) * 0.42;
+          }
+          break;
+        }
+        case "saber": {
+          if (combo === 3) {
+            // Heavy overhead cleave: raise high overhead -> slam blade forward-down -> hold low follow-through
+            const up = s < 0.26 ? smooth(s / 0.26) : 1;
+            const cut = s < 0.26 ? 0 : smooth((s - 0.26) / 0.34);
+            bodyYaw = -0.3 * up + 0.55 * cut;
+            bodyPitch += 0.24 * cut;
+            armRX = -0.9 - 2.0 * up + 2.55 * cut;
+            armLX = -0.6 - 1.7 * up + 1.8 * cut;
+            armRZ = 0.25 - 0.55 * cut;
+            armLZ = -0.2;
+            swordRotX = 2.0 + 0.9 * cut;
+          } else {
+            // Forehand (1) & backhand (2) diagonal cuts with blade extending forward in the slash plane
+            const dir = combo === 2 ? -1 : 1;
+            const coil = s < 0.22 ? smooth(s / 0.22) : 1;
+            const cut = s < 0.22 ? 0 : smooth((s - 0.22) / 0.36);
+            bodyYaw = dir * (0.58 * coil - 1.32 * cut);
+            armRX = -1.35 - 0.25 * coil + 0.35 * cut;
+            armRZ = dir * (1.18 * coil - 2.25 * cut);
+            armLX = -0.55;
+            armLZ = -0.45;
+            swordRotX = 2.75;
             swordRotZ = dir * 0.45;
+            if (isFlying) bodyRoll += dir * 0.38 * Math.sin(cut * Math.PI);
           }
           break;
         }
         case "lancer": {
-          if (p.attackCombo === 3) {
-            // Wide sweeping polearm finish
-            bodyYaw = 0.65 - a * 1.3;
-            armRX = -1.5;
-            armRZ = 0.95 - a * 2.1;
-            spearRotX = Math.PI * 0.96;
-            spearY = -0.8;
-          } else {
-            // Crisp two-step forward spear thrust along +Z
-            const plunge = Math.sin(a * Math.PI);
-            bodyYaw = -0.35 + plunge * 0.55;
-            armRX = -Math.PI / 2;
-            armRZ = 0.08;
+          if (combo === 3) {
+            // Wide horizontal polearm sweep
+            const coil = s < 0.24 ? smooth(s / 0.24) : 1;
+            const sweep = s < 0.24 ? 0 : smooth((s - 0.24) / 0.36);
+            bodyYaw = 0.78 * coil - 1.72 * sweep;
+            armRX = -1.45;
+            armRZ = 1.25 * coil - 2.3 * sweep;
             armLX = 0.35;
-            spearRotX = Math.PI * 0.98;
-            spearY = -0.62 - plunge * 0.72;
-          }
-          break;
-        }
-        case "archer": {
-          // Side-on archery stance: left arm holds bow forward, right hand nocks & draws string back then looses.
-          bodyYaw = -0.55;
-          armLX = -Math.PI / 2;
-          armLZ = 0.1;
-          bowRotX = Math.PI / 2;
-          bowRotZ = 0;
-          if (a < 0.55) {
-            bowPull = a / 0.55;
-            showArrow = true;
-            armRX = -1.52;
-            armRZ = -0.28 - bowPull * 0.22;
+            spearRotX = Math.PI * 0.96;
+            spearY = -0.82;
+            if (isFlying) bodyRoll += 0.42 * Math.sin(sweep * Math.PI);
           } else {
-            bowPull = Math.max(0, 1 - (a - 0.55) * 4);
-            showArrow = false;
-            armRX = -1.52;
-            armRZ = -0.52;
+            // Two-step chambered spear thrust at chest height: pull back -> lunge & extend dead-ahead -> recover
+            const coil = s < 0.24 ? smooth(s / 0.24) : 1;
+            const thrust = s < 0.24 ? 0 : s < 0.56 ? smooth((s - 0.24) / 0.32) : 1 - 0.35 * smooth((s - 0.56) / 0.44);
+            bodyYaw = -0.72 * coil + 0.95 * thrust;
+            bodyPitch += 0.16 * thrust;
+            armRX = -0.72 - 1.05 * thrust;
+            armRZ = 0.06;
+            armLX = -1.15 * coil + 1.45 * thrust;
+            armLZ = 0.42 * (1 - thrust);
+            spearRotX = Math.PI * (0.9 + 0.04 * thrust);
+            spearY = -0.25 - 1.1 * thrust;
           }
           break;
         }
         case "vanguard": {
-          if (p.attackCombo === 2) {
-            // Shield bash forward
-            bodyYaw = -0.35 + a * 0.65;
-            armLX = -1.58;
-            armLZ = 0.45;
-            shieldRotY = 1.35;
-            armRX = 0.25;
+          if (combo === 2) {
+            // Heavy shield bash: draw left shoulder back -> punch flat shield face straight forward
+            const coil = s < 0.24 ? smooth(s / 0.24) : 1;
+            const bash = s < 0.24 ? 0 : s < 0.58 ? smooth((s - 0.24) / 0.34) : 1 - 0.3 * smooth((s - 0.58) / 0.42);
+            bodyYaw = 0.35 * coil - 0.7 * bash;
+            bodyPitch += 0.18 * bash;
+            armLX = -0.8 - 0.85 * bash;
+            armLZ = 0.25 + 0.45 * bash;
+            shieldRotY = 0.7 + 0.78 * bash;
+            armRX = 0.35 * bash;
+            if (isFlying) bodyRoll -= 0.32 * Math.sin(bash * Math.PI);
           } else {
-            // Short-sword slash (1 & 3)
-            const heavy = p.attackCombo === 3;
-            bodyYaw = 0.4 - a * 0.85;
-            armRX = -2.2 + a * 1.65;
-            armRZ = 0.75 - a * 1.4;
-            swordRotX = heavy ? 1.5 : 1.7;
+            // Shield-braced sword cleave
+            const dir = combo === 3 ? -1 : 1;
+            const coil = s < 0.22 ? smooth(s / 0.22) : 1;
+            const cut = s < 0.22 ? 0 : smooth((s - 0.22) / 0.36);
+            bodyYaw = dir * (0.5 * coil - 1.05 * cut);
+            armRX = -2.25 * coil + 1.7 * cut;
+            armRZ = dir * (0.85 * coil - 1.65 * cut);
+            swordRotX = 2.65;
             armLX = -1.1;
-            shieldRotY = 0.6;
+            armLZ = 0.35;
+            shieldRotY = 0.85;
           }
           break;
         }
@@ -440,29 +651,221 @@ export class CharacterRig {
       if (this.classId === "vanguard") {
         armLX = -1.3; armLZ = 0.85; shieldRotY = 1.48; bodyYaw = -0.2;
       } else if (this.classId === "saber") {
-        armRX = -1.35; armRZ = -0.75; swordRotX = 0.5; swordRotZ = 0.85; bodyYaw = 0.25;
+        armRX = -1.35; armRZ = -0.75; swordRotX = 2.0; swordRotZ = 0.85; bodyYaw = 0.25;
       }
-    } else if (this.classId === "archer" && p.classCooldown > 0.1 && p.downTime <= 0) {
-      bodyYaw = -0.45; armLX = -Math.PI / 2; armLZ = 0.1; bowRotX = Math.PI / 2; bowRotZ = 0;
+    } else if ((airAiming || (this.classId === "archer" && this.combatHold > 0)) && p.downTime <= 0) {
+      // Hold poised archery stance between arrows / while planting Crossfire
+      bodyYaw = 1.35;
+      armLX = -0.12; armLZ = -1.48;
+      bowRotX = Math.PI / 2; bowRotZ = Math.PI / 2 - 0.16;
+      armRX = -1.3; armRZ = -1.1;
+      if (!isFlying) legSwing = -0.2;
+    } else if (this.combatHold > 0 && p.downTime <= 0) {
+      // Keep melee ready stance smoothly between combo strikes instead of snapping arms to hips
+      if (this.classId === "saber") {
+        bodyYaw = -0.25; armRX = -0.95; armRZ = 0.3; armLX = -0.5; armLZ = -0.35; swordRotX = 2.45;
+      } else if (this.classId === "lancer") {
+        bodyYaw = -0.42; armRX = -0.78; armLX = -1.12; armLZ = 0.36; spearRotX = Math.PI * 0.92; spearY = -0.46;
+      } else if (this.classId === "vanguard") {
+        armLX = -0.75; armLZ = 0.42; shieldRotY = 0.9; armRX = -0.75; swordRotX = 2.35;
+      }
+    } else if (this.skillTime > 0 && this.activeSkill && p.downTime <= 0) {
+      // Dedicated full-body animations for every mantle skill, exploration skill, ultimate & signature counter.
+      const k = Math.max(0, Math.min(1, 1 - this.skillTime / this.skillDur));
+      armRate = 28;
+      switch (this.activeSkill) {
+        case "slam":
+        case "breakwater": {
+          const lift = k < 0.32 ? smooth(k / 0.32) : 1;
+          const down = k < 0.32 ? 0 : smooth((k - 0.32) / 0.34);
+          bodyY += 0.52 * lift * (1 - down) - 0.14 * down;
+          bodyPitch += -0.25 * lift + 0.72 * down;
+          armLX = -2.6 * lift + 2.15 * down;
+          armRX = -2.6 * lift + 2.15 * down;
+          armLZ = -0.35 + 0.45 * down;
+          armRZ = 0.35 - 0.45 * down;
+          if (this.activeSkill === "breakwater" && this.shield) { shieldRotY = 1.48; armLX = -1.55; armLZ = 0.4; }
+          capeLift += 0.55 * Math.sin(k * Math.PI);
+          break;
+        }
+        case "hurl": {
+          const back = k < 0.3 ? smooth(k / 0.3) : 1;
+          const whip = k < 0.3 ? 0 : smooth((k - 0.3) / 0.35);
+          bodyYaw = 0.8 * back - 1.55 * whip;
+          bodyPitch += -0.2 * back + 0.42 * whip;
+          armRX = -2.8 * back + 2.4 * whip;
+          armRZ = 0.55 * back - 0.3 * whip;
+          armLX = -0.85;
+          break;
+        }
+        case "undertow":
+        case "riptide": {
+          const open = k < 0.36 ? smooth(k / 0.36) : 1;
+          const pull = k < 0.36 ? 0 : smooth((k - 0.36) / 0.38);
+          if (this.activeSkill === "riptide") bodyY += 0.72 * Math.sin(k * Math.PI);
+          bodyYaw = 0.35 * open - 0.7 * pull;
+          bodyPitch += -0.18 * open + 0.28 * pull;
+          armLX = -1.15;
+          armRX = -1.15;
+          armLZ = -1.45 * open + 1.65 * pull;
+          armRZ = 1.45 * open - 1.65 * pull;
+          capeLift += 0.75 * Math.sin(k * Math.PI);
+          break;
+        }
+        case "surge": {
+          const charge = k < 0.26 ? smooth(k / 0.26) : 1;
+          const blast = k < 0.26 ? 0 : smooth((k - 0.26) / 0.3);
+          bodyYaw = 0.45 * charge - 0.55 * blast;
+          bodyPitch += 0.22 * blast;
+          armLX = 0.45 * charge - 2.0 * blast;
+          armRX = 0.45 * charge - 2.0 * blast;
+          armLZ = 0.15 * blast;
+          armRZ = -0.15 * blast;
+          break;
+        }
+        case "chain": {
+          const arc = Math.sin(k * Math.PI);
+          bodyYaw = -0.55 * arc;
+          bodyPitch += 0.12 * arc;
+          armRX = -1.62 * arc;
+          armLX = 0.45 * arc;
+          armRZ = 0.2;
+          break;
+        }
+        case "static":
+        case "tempest": {
+          const pulse = Math.sin(k * Math.PI);
+          bodyY += (this.activeSkill === "tempest" ? 0.95 : 0.48) * pulse;
+          bodyPitch -= 0.34 * pulse;
+          armLX = -2.45 * pulse;
+          armRX = -2.45 * pulse;
+          armLZ = -0.95 * pulse;
+          armRZ = 0.95 * pulse;
+          capeLift += 0.9 * pulse;
+          break;
+        }
+        case "updraft": {
+          const rise = Math.sin(k * Math.PI);
+          bodyYaw = k * Math.PI * 2;
+          bodyY += 0.45 * rise;
+          armLX = -1.9 * rise;
+          armRX = -1.9 * rise;
+          armLZ = -1.25 * rise;
+          armRZ = 1.25 * rise;
+          capeLift += 0.8 * rise;
+          break;
+        }
+        case "surface": {
+          const glide = Math.sin(k * Math.PI);
+          bodyPitch = Math.max(bodyPitch, 0.58 * glide);
+          bodyRoll += 0.28 * glide;
+          armLX = -1.15 * glide;
+          armRX = 0.55 * glide;
+          legSwing = -0.35 * glide;
+          break;
+        }
+        case "leap": {
+          const crouch = k < 0.24 ? smooth(k / 0.24) : 1;
+          const jump = k < 0.24 ? 0 : smooth((k - 0.24) / 0.4);
+          bodyY += -0.32 * crouch * (1 - jump) + 0.55 * jump;
+          bodyPitch += 0.45 * crouch * (1 - jump) - 0.15 * jump;
+          armLX = 0.4 * crouch - 2.9 * jump;
+          armRX = 0.4 * crouch - 2.9 * jump;
+          break;
+        }
+        case "colossal": {
+          const roar = Math.sin(k * Math.PI);
+          bodyY += 0.35 * roar;
+          bodyPitch -= 0.38 * roar;
+          armLX = -1.15 * roar;
+          armRX = -1.15 * roar;
+          armLZ = -1.35 * roar;
+          armRZ = 1.35 * roar;
+          capeLift += 0.85 * roar;
+          break;
+        }
+        case "riposte": {
+          bodyYaw = k * Math.PI * 2;
+          armRX = -1.52;
+          armRZ = -0.75;
+          armLX = -0.4;
+          armLZ = -0.8;
+          swordRotX = 2.8;
+          if (this.swordGlow) this.swordGlow.setEnabled(true);
+          break;
+        }
+      }
+    } else if (this.castTime > 0 && p.downTime <= 0) {
+      // Mantle ability cast flare (works on ground and mid-flight)
+      const c = Math.sin((1 - this.castTime / 0.36) * Math.PI);
+      armRate = 24;
+      bodyPitch -= 0.2 * c;
+      armLX = -1.25 * c;
+      armRX = -1.25 * c;
+      armLZ = -0.75 * c;
+      armRZ = 0.75 * c;
+      capeLift += 0.35 * c;
     } else if (this.classId === "archer" && p.mode === Mode.Ground && hSpeed < 2) {
-      // Relaxed bow-in-hand ready stance when standing
-      armLX = -0.35; armLZ = -0.15; bowRotX = 0.35;
+      // Relaxed bow-in-hand ready stance when standing, angled cleanly clear of the ground.
+      armLX = -0.52; armLZ = -0.24; bowRotX = 0.58; bowRotZ = 0.32;
+    }
+
+    // Dodge animation: aerial barrel roll in flight/air, crisp dash tilt on ground.
+    if (p.dodgeTime > 0 && p.downTime <= 0) {
+      const dProg = 1 - Math.max(0, Math.min(1, p.dodgeTime / 0.22));
+      const dir = turnRate < -0.2 ? -1 : 1;
+      if (isFlying || p.mode === Mode.Air) {
+        bodyRoll = dir * dProg * Math.PI * 2;
+        armLZ = Math.min(armLZ, -0.35);
+        armRZ = Math.max(armRZ, 0.35);
+      } else {
+        bodyPitch += 0.32;
+        bodyRoll += dir * 0.28;
+      }
+    }
+
+    // Keep active melee thrust/guard level in aerial combat (Archer keeps upright level hover aim at 0.08).
+    if (isFlying && p.downTime <= 0 && (isAttacking || p.guarding)) {
+      const levelFix = Math.max(0, bodyPitch * 0.85);
+      if (this.classId === "lancer") armRX -= levelFix;
+      else if (this.classId === "vanguard") {
+        armLX -= levelFix * 0.75;
+        if (isAttacking && this.activeCombo !== 2) armRX -= levelFix * 0.55;
+      } else if (this.classId === "saber") armRX -= levelFix * 0.55;
+    }
+
+    if (this.blinkTime > 0 && p.downTime <= 0) {
+      const bk = Math.sin((this.blinkTime / 0.28) * Math.PI);
+      bodyPitch += 0.36 * bk;
+      armLX = Math.max(armLX, 0.55 * bk);
+      armRX = Math.max(armRX, 0.55 * bk);
+      capeLift += 0.65 * bk;
     }
 
     if (p.downTime > 0) {
-      bodyPitch = -1.45; bodyY = 0.35;
-      legSwing = 0; legBack = 0; armLX = -0.2; armRX = -0.2; armLZ = -1.2; armRZ = 1.2;
+      bodyPitch = -1.45; bodyY = 0.35; bodyRoll = 0;
+      legSwing = 0; legBack = 0; legStagger = 0; armLX = -0.2; armRX = -0.2; armLZ = -1.2; armRZ = 1.2;
     }
 
-    // Apply body & limb transforms
+    // Apply body, head look-ahead & limb transforms
     const r = 10;
     this.pitch = damp(this.pitch, bodyPitch, r, dt);
     this.bodyYaw = damp(this.bodyYaw, bodyYaw, 18, dt);
+    const rollRate = p.dodgeTime > 0 ? 40 : 10;
+    this.roll = damp(this.roll, bodyRoll, rollRate, dt);
     this.body.rotation.x = this.pitch;
     this.body.rotation.y = this.bodyYaw;
+    this.body.rotation.z = this.roll;
     this.body.position.y = damp(this.body.position.y, bodyY, 12, dt);
-    this.legL.rotation.x = damp(this.legL.rotation.x, legSwing + legBack, r, dt);
-    this.legR.rotation.x = damp(this.legR.rotation.x, -legSwing + legBack, r, dt);
+
+    // Head sights straight down the arrow/weapon at the target even when the torso twists side-on, and looks ahead in flight.
+    const headPitch = p.downTime > 0 ? 0.35 : Math.max(-0.98, Math.min(0.28, -this.pitch * 0.72));
+    this.head.rotation.x = damp(this.head.rotation.x, headPitch, 14, dt);
+    const yawTrack = this.classId === "archer" ? 0.88 : 0.72;
+    this.head.rotation.y = damp(this.head.rotation.y, -this.bodyYaw * yawTrack - Math.max(-0.35, Math.min(0.35, this.roll * 0.4)), 18, dt);
+
+    this.legL.rotation.x = damp(this.legL.rotation.x, legSwing + legBack - legStagger * 0.55, r, dt);
+    this.legR.rotation.x = damp(this.legR.rotation.x, -legSwing + legBack + legStagger * 0.55, r, dt);
     this.armL.rotation.x = damp(this.armL.rotation.x, armLX, armRate, dt);
     this.armR.rotation.x = damp(this.armR.rotation.x, armRX, armRate, dt);
     this.armL.rotation.z = damp(this.armL.rotation.z, armLZ, armRate, dt);
@@ -472,34 +875,40 @@ export class CharacterRig {
     if (this.sword) {
       this.sword.rotation.x = damp(this.sword.rotation.x, swordRotX, armRate, dt);
       this.sword.rotation.z = damp(this.sword.rotation.z, swordRotZ, armRate, dt);
-      if (this.swordGlow) this.swordGlow.setEnabled(p.classCharge > 0 || p.guarding || (p.attackTime > 0 && p.downTime <= 0));
+      if (this.swordGlow) this.swordGlow.setEnabled(p.classCharge > 0 || p.guarding || (isAttacking && p.downTime <= 0));
     }
     if (this.spear) {
       this.spear.rotation.x = damp(this.spear.rotation.x, spearRotX, armRate, dt);
       this.spear.position.y = damp(this.spear.position.y, spearY, armRate, dt);
       if (this.lanceCone) {
         const fast = (p.mode === Mode.Dive || (p.mode === Mode.Flight && speed >= 22)) && p.downTime <= 0;
-        this.lanceCone.setEnabled(fast || (p.attackTime > 0 && p.attackCombo !== 3));
+        this.lanceCone.setEnabled(fast || (this.swingAnim > 0.14 && this.activeCombo !== 3));
       }
     }
     if (this.bow) {
       this.bow.rotation.x = damp(this.bow.rotation.x, bowRotX, armRate, dt);
       this.bow.rotation.z = damp(this.bow.rotation.z, bowRotZ, armRate, dt);
       if (this.bowLimbU && this.bowLimbL) {
-        this.bowLimbU.rotation.x = -0.28 - bowPull * 0.22;
-        this.bowLimbL.rotation.x = 0.28 + bowPull * 0.22;
+        this.bowLimbU.rotation.x = -0.24 - bowPull * 0.28;
+        this.bowLimbL.rotation.x = 0.24 + bowPull * 0.28;
       }
       if (this.bowStringU && this.bowStringL) {
-        const pullZ = -0.17 - bowPull * 0.36;
-        const tilt = bowPull * 0.56;
-        this.bowStringU.position.z = ( -0.17 + pullZ ) * 0.5;
+        const tipY = 0.76 - bowPull * 0.08;
+        const tipZ = -0.16 - bowPull * 0.14;
+        const nockZ = -0.16 - bowPull * 0.44;
+        const dz = tipZ - nockZ;
+        const halfLen = Math.hypot(tipY, dz) / 0.76;
+        const tilt = Math.atan2(dz, tipY);
+        this.bowStringU.position.set(0, tipY * 0.5, (tipZ + nockZ) * 0.5);
+        this.bowStringU.scaling.y = halfLen;
         this.bowStringU.rotation.x = -tilt;
-        this.bowStringL.position.z = ( -0.17 + pullZ ) * 0.5;
+        this.bowStringL.position.set(0, -tipY * 0.5, (tipZ + nockZ) * 0.5);
+        this.bowStringL.scaling.y = halfLen;
         this.bowStringL.rotation.x = tilt;
       }
       if (this.nockedArrow) {
         this.nockedArrow.setEnabled(showArrow);
-        this.nockedArrow.position.z = 0.05 - bowPull * 0.36;
+        this.nockedArrow.position.z = 0.05 - bowPull * 0.44;
       }
     }
     if (this.shield) {
@@ -508,11 +917,28 @@ export class CharacterRig {
       this.shieldChargeGlow?.setEnabled(p.classCharge > 0 && p.downTime <= 0);
     }
 
-    const flutter = Math.sin(this.time * (6 + speed * 0.3)) * 0.06 * Math.min(1, speed / 10);
-    this.cape.rotation.x = damp(this.cape.rotation.x, capeLift + flutter, 8, dt);
+    // Subtract body pitch so cape and streamers trail naturally behind the torso instead of sticking straight up in horizontal flight.
+    const relCape = Math.max(0.08, capeLift - Math.max(0, this.pitch * 0.88));
+    const flutter = Math.sin(this.time * (6 + speed * 0.3)) * (0.06 + (isFlying ? 0.05 : 0)) * Math.min(1, speed / 10);
+    const windBank = -this.roll * 0.5 + Math.cos(this.time * (4 + speed * 0.2)) * 0.04 * Math.min(1, speed / 12);
+    this.cape.rotation.x = damp(this.cape.rotation.x, relCape + flutter, 8, dt);
+    this.cape.rotation.z = damp(this.cape.rotation.z, windBank, 8, dt);
     for (const [i, s] of this.streamers.entries()) {
-      const wave = Math.sin(this.time * (8 + speed * 0.4) + i * 1.7) * 0.15 * Math.min(1, speed / 6);
-      s.rotation.x = damp(s.rotation.x, capeLift * 1.2 + wave, 8, dt);
+      const wave = Math.sin(this.time * (8 + speed * 0.4) + i * 1.7) * 0.16 * Math.min(1, speed / 6);
+      s.rotation.x = damp(s.rotation.x, Math.max(0.1, relCape * 1.15) + wave, 8, dt);
+      s.rotation.z = damp(s.rotation.z, windBank * 1.2, 8, dt);
+    }
+
+    this.giantAura.setEnabled(p.giant && p.downTime <= 0);
+    if (p.giant) {
+      this.giantAura.rotation.y += dt * 3.2;
+      const gPulse = 1 + Math.sin(this.time * 8) * 0.08;
+      this.giantAura.scaling.set(gPulse, 1, gPulse);
+    }
+    this.tempestCrown.setEnabled(this.tempestTime > 0 && p.downTime <= 0);
+    if (this.tempestTime > 0) {
+      this.tempestCrown.rotation.y -= dt * 4.5;
+      this.tempestCrown.position.y = 0.72 + Math.sin(this.time * 6) * 0.06;
     }
 
     const ground = groundHeightAt(world, p.x, p.z, p.y + 0.1);
@@ -530,6 +956,8 @@ export class CharacterRig {
   dispose() {
     for (const m of this.meshes) m.dispose();
     for (const n of this.nodes) n.dispose();
+    this.giantAura.dispose();
+    this.tempestCrown.dispose();
     this.shadow.dispose();
     this.root.dispose();
   }

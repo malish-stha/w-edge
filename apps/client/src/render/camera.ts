@@ -8,6 +8,8 @@ export class FollowCamera {
   readonly camera: TargetCamera;
   private target = new Vector3();
   private distance = 8;
+  private shake = 0;
+  private shakeT = 0;
 
   /** Collision geometry for keeping the camera out of walls; swapped when changing rooms. */
   world: World;
@@ -20,16 +22,24 @@ export class FollowCamera {
     this.camera.fov = 1.0;
   }
 
-  update(px: number, py: number, pz: number, yaw: number, pitch: number, zoom: number, speed: number, dt: number) {
-    // Follow a point above the shoulders, smoothed slightly so landings don't jolt.
-    const k = 1 - Math.exp(-18 * dt);
-    this.target.x += (px - this.target.x) * k;
-    this.target.y += (py + 1.6 - this.target.y) * k;
-    this.target.z += (pz - this.target.z) * k;
-    if (Vector3.DistanceSquared(this.target, new Vector3(px, py + 1.6, pz)) > 400) this.target.set(px, py + 1.6, pz);
+  /** Brief camera kick for heavy skills, slams, and ultimates. */
+  punch(amount: number) {
+    this.shake = Math.min(0.6, Math.max(this.shake, amount));
+  }
 
-    // Pull back a little at speed for a sense of velocity.
+  update(px: number, py: number, pz: number, yaw: number, pitch: number, zoom: number, speed: number, dt: number) {
+    // Follow a point slightly above the head so the center crosshair clears the character's crown.
+    const k = 1 - Math.exp(-18 * dt);
+    const ty = py + 1.98;
+    this.target.x += (px - this.target.x) * k;
+    this.target.y += (ty - this.target.y) * k;
+    this.target.z += (pz - this.target.z) * k;
+    if (Vector3.DistanceSquared(this.target, new Vector3(px, ty, pz)) > 400) this.target.set(px, ty, pz);
+
+    // Pull back a little and widen FOV slightly at flight/dive speeds for velocity feel.
     const desired = zoom + Math.min(6, speed * 0.08);
+    const targetFov = 1.0 + Math.min(0.16, Math.max(0, speed - 12) * 0.0045);
+    this.camera.fov += (targetFov - this.camera.fov) * (1 - Math.exp(-5 * dt));
     const cp = Math.cos(pitch);
     const dir = { x: -Math.sin(yaw) * cp, y: -Math.sin(pitch), z: -Math.cos(yaw) * cp };
     const origin = { x: this.target.x, y: this.target.y, z: this.target.z };
@@ -38,8 +48,13 @@ export class FollowCamera {
     // Snap in when blocked, ease back out when clear.
     this.distance = allowed < this.distance ? allowed : this.distance + (allowed - this.distance) * (1 - Math.exp(-4 * dt));
 
+    this.shakeT += dt * 42;
+    this.shake *= Math.exp(-11 * dt);
+    const sx = this.shake > 0.002 ? Math.sin(this.shakeT * 1.3) * this.shake : 0;
+    const sy = this.shake > 0.002 ? Math.cos(this.shakeT * 1.9) * this.shake * 0.8 : 0;
+
     const pos = this.camera.position;
-    pos.set(origin.x + dir.x * this.distance, origin.y + dir.y * this.distance, origin.z + dir.z * this.distance);
+    pos.set(origin.x + dir.x * this.distance + sx, origin.y + dir.y * this.distance + sy, origin.z + dir.z * this.distance);
     if (pos.z > RIM_Z && pos.y < SEA_LEVEL + 0.5) pos.y = SEA_LEVEL + 0.5;
     this.camera.setTarget(this.target);
   }

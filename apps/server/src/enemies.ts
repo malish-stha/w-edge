@@ -7,17 +7,15 @@
  * Training dummy: takes hits in the training yard and resets.
  */
 import {
-  ENEMY_KINDS, ENEMY_SIZE, EnemyState, type Fx,
-  getWorld, groundHeightAt,
+  ENEMY_KINDS, ENEMY_SIZE, EnemyState, type Fx, type World,
+  groundHeightAt,
 } from "@worlds-edge/shared";
 import { Enemy, type Player, type WorldState } from "./schema.ts";
 
-const world = getWorld();
+export interface Spawn { kind: string; x: number; z: number; leash: number; y?: number }
 
-interface Spawn { kind: string; x: number; z: number; leash: number }
-
-/** Island tops: first island (160,-300) top 18.8; western isle (-120,-380) top 26.8. */
-const SPAWNS: Spawn[] = [
+/** Overworld spawns. Island tops: first island (160,-300); western isle (-120,-380). */
+export const WORLD_SPAWNS: Spawn[] = [
   { kind: "dummy", x: -66, z: 38, leash: 0 },
   { kind: "dummy", x: -54, z: 40, leash: 0 },
   { kind: "wretch", x: 152, z: -292, leash: 22 },
@@ -46,10 +44,13 @@ interface Brain {
   /** Players who hit this enemy recently, for shared reward credit. */
   contributors: Map<string, number>;
   pull: { x: number; z: number; t: number } | null;
+  /** Spawned mid-fight (dungeon adds): removed after death instead of respawning. */
+  transient: boolean;
 }
 
 export interface Host {
   readonly state: WorldState;
+  readonly world: World;
   now(): number;
   fx(e: Fx): void;
   damagePlayer(sid: string, amount: number, knockX: number, knockZ: number, power: number): void;
@@ -71,22 +72,45 @@ function angleDiff(a: number, b: number) {
   return d;
 }
 
+/** A room can take over how particular enemies take damage (the boss heart). */
+export type HitOverride = (id: string, e: Enemy, attacker: string, health: number, guard: number, opts: HitOptions) => HitResult | null;
+
 export class Enemies {
   private brains = new Map<string, Brain>();
+  private nextId = 0;
+  override: HitOverride | null = null;
+  /** Called when an enemy dies (after XP is awarded). */
+  onKilled: ((id: string, e: Enemy) => void) | null = null;
 
-  constructor(private host: Host) {
-    SPAWNS.forEach((spawn, i) => {
-      const id = `e${i}`;
-      const homeY = groundHeightAt(world, spawn.x, spawn.z, 200);
-      this.brains.set(id, {
-        id, spawn, homeY, target: null, t: 0, dirX: 0, dirZ: 1, struck: new Set(), cooldown: 0,
-        lastHit: -100, respawnAt: 0, contributors: new Map(), pull: null,
-      });
-      const e = new Enemy();
-      e.kind = spawn.kind;
-      this.reset(e, this.brains.get(id)!);
-      host.state.enemies.set(id, e);
-    });
+  constructor(private host: Host, spawns: Spawn[]) {
+    for (const spawn of spawns) this.spawn(spawn, false);
+  }
+
+  /** Add an enemy. Transient ones (dungeon adds) disappear after dying. */
+  spawn(spawn: Spawn, transient = true, id = `e${this.nextId++}`): string {
+    const homeY = spawn.y ?? groundHeightAt(this.host.world, spawn.x, spawn.z, 200);
+    const b: Brain = {
+      id, spawn, homeY, target: null, t: 0, dirX: 0, dirZ: 1, struck: new Set(), cooldown: 0,
+      lastHit: -100, respawnAt: 0, contributors: new Map(), pull: null, transient,
+    };
+    this.brains.set(id, b);
+    const e = new Enemy();
+    e.kind = spawn.kind;
+    this.reset(e, b);
+    this.host.state.enemies.set(id, e);
+    return id;
+  }
+
+  remove(id: string) {
+    this.brains.delete(id);
+    this.host.state.enemies.delete(id);
+  }
+
+  /** Restore an enemy to full health in place (encounter resets). */
+  restore(id: string) {
+    const e = this.host.state.enemies.get(id);
+    const b = this.brains.get(id);
+    if (e && b) this.reset(e, b);
   }
 
   private reset(e: Enemy, b: Brain) {
@@ -121,6 +145,10 @@ export class Enemies {
     b.lastHit = now;
     b.contributors.set(attacker, now);
     if (!b.target && e.kind !== "dummy") b.target = attacker;
+    if (this.override) {
+      const custom = this.override(id, e, attacker, health, guard, opts);
+      if (custom) return custom;
+    }
 
     if (e.kind === "hullbreaker" && e.state !== EnemyState.Stagger) {
       const fromAngle = angleTo(e.x, e.z, fromX, fromZ);
@@ -140,7 +168,7 @@ export class Enemies {
 
     e.guard = Math.max(0, e.guard - guard);
     let broke = false;
-    if (e.guard === 0 && e.state !== EnemyState.Stagger && e.kind !== "dummy") {
+    if (e.guard === 0 && e.maxGuard > 0 && e.state !== EnemyState.Stagger && e.kind !== "dummy") {
       e.state = EnemyState.Stagger;
       b.t = 0;
       broke = true;
@@ -161,6 +189,7 @@ export class Enemies {
       this.host.fx({ t: "kill", x: r1(e.x), y: r1(e.y + 1), z: r1(e.z), xp });
       // Everyone who helped in the last 30 s gets full credit.
       for (const [sid, at] of b.contributors) if (now - at < 30) this.host.awardXp(sid, xp);
+      this.onKilled?.(id, e);
     }
     return res;
   }
@@ -182,9 +211,11 @@ export class Enemies {
       b.cooldown = Math.max(0, b.cooldown - dt);
 
       if (e.state === EnemyState.Dead) {
-        if (now >= b.respawnAt) this.reset(e, b);
+        if (b.transient) { if (b.t > 2) this.remove(id); }
+        else if (e.kind !== "anchor" && e.kind !== "heart" && now >= b.respawnAt) this.reset(e, b);
         return;
       }
+      if (e.kind === "anchor" || e.kind === "heart") return; // driven by the encounter
       // Guard recovers when left alone.
       if (now - b.lastHit > 4 && e.state !== EnemyState.Stagger) e.guard = Math.min(e.maxGuard, e.guard + 15 * dt);
 
@@ -321,7 +352,7 @@ export class Enemies {
   private moveTo(e: Enemy, b: Brain, nx: number, nz: number) {
     const fromHome = Math.hypot(nx - b.spawn.x, nz - b.spawn.z);
     if (fromHome > b.spawn.leash) return;
-    const ground = groundHeightAt(world, nx, nz, e.y + 1.5);
+    const ground = groundHeightAt(this.host.world, nx, nz, e.y + 1.5);
     if (!Number.isFinite(ground) || Math.abs(ground - b.homeY) > 3) return; // edge of the island
     e.x = nx; e.z = nz; e.y = ground;
   }

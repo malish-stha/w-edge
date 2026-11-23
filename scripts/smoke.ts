@@ -82,10 +82,10 @@ console.log("landed at", landed, await page.textContent("#mode"));
 // Sign out, sign back in: same character, same place.
 await page.evaluate(() => (document.getElementById("menu-signout") as HTMLButtonElement).click());
 await signIn(page, `alice${tag}`);
-await page.waitForSelector(".character", { timeout: 10000 });
-check((await page.textContent(".characters"))?.includes(`Alice ${tag}`) ?? false, "character is listed after signing back in");
+await page.waitForSelector("#screen .character", { timeout: 10000 });
+check((await page.textContent("#screen .characters"))?.includes(`Alice ${tag}`) ?? false, "character is listed after signing back in");
 await page.screenshot({ path: `${out}/4-characters.png` });
-await page.click(".character >> text=Play");
+await page.click("#screen .character >> text=Play");
 await page.waitForSelector("#hud:not([hidden])", { timeout: 15000 });
 await page.waitForTimeout(1500);
 await page.keyboard.press("F3");

@@ -1,142 +1,49 @@
-import { Room, ServerError, type Client } from "colyseus";
+import { ServerError, matchMaker, type Client } from "colyseus";
 import {
-  DOWN_SECONDS, HP_REGEN, HP_REGEN_DELAY, MANTLE_SKILLS, MANTLES, MAX_LEVEL, Mode, PATCH_RATE, PLAYER_MAX_HP, SHRINE, TICK_RATE,
-  WORLD_ROOM_CAPACITY, createMoveState, createStepEvents, getWorld, levelForXp, stepMovement, type Fx,
+  COLOSSUS, MANTLE_SKILLS, MANTLES, SHRINE, WORLD_ROOM_CAPACITY, getWorld,
 } from "@worlds-edge/shared";
-import { authConfig, verifySession } from "./auth.ts";
-import { Combat } from "./combat.ts";
-import type { Store, StoredCharacter } from "./db.ts";
-import { Enemies, type Host } from "./enemies.ts";
-import { onlineCharacters } from "./presence.ts";
-import { MoveInput, Player, WorldState } from "./schema.ts";
+import type { StoredCharacter } from "./db.ts";
+import { WORLD_SPAWNS } from "./enemies.ts";
+import { GameRoom } from "./GameRoom.ts";
+import { Parties } from "./parties.ts";
+import type { Player } from "./schema.ts";
 
-const world = getWorld();
-const AUTOSAVE_MS = 20_000;
-const RECONNECT_SECONDS = 20;
+export { useStore } from "./GameRoom.ts";
 
-let store: Store;
-export function useStore(s: Store) { store = s; }
+const READY_SECONDS = 30;
+/** Party members must be this close to the gate for the ready check. */
+const GATHER_RADIUS = 30;
 
-interface JoinAuth { accountId: number; character: StoredCharacter }
-
-/** Server-only facts about a connected player. */
-interface Meta { characterId: number; lastHurt: number }
+interface ReadyCheck { members: number[]; ready: Set<number>; expires: number }
 
 /**
  * One copy of the shared world (First Harbour, the Broken Isles and the rim).
  * When it fills up, matchmaking opens another copy automatically.
- *
- * The server is authoritative: clients only send inputs. Every player's movement
- * comes from running the shared movement code here; attacks, enemies, damage
- * and rewards are resolved here too.
  */
-export class WorldRoom extends Room<{ state: WorldState; input: MoveInput }> implements Host {
+export class WorldRoom extends GameRoom {
   maxClients = WORLD_ROOM_CAPACITY;
-  inputs = this.defineInput(MoveInput, { bufferMaxSize: 32 });
-  private meta = new Map<string, Meta>();
-  private pendingFx: Fx[] = [];
-  private enemies!: Enemies;
-  private combat!: Combat;
-
-  /** Runs before a seat is reserved: check the session token and that the character is theirs. */
-  static async onAuth(token: string, options: { characterId?: unknown }): Promise<JoinAuth> {
-    const accountId = await verifySession(token);
-    if (!accountId) throw new ServerError(401, "Please sign in again.");
-    const characterId = Number(options?.characterId);
-    if (!Number.isInteger(characterId)) throw new ServerError(400, "Choose a character.");
-    const character = await store.getCharacter(characterId, accountId);
-    if (!character) throw new ServerError(404, "Character not found.");
-    if (onlineCharacters.has(characterId)) throw new ServerError(409, "That character is already in the world.");
-    return { accountId, character };
-  }
+  readonly world = getWorld();
+  /** Ready checks by party leader's character id. */
+  private readyChecks = new Map<number, ReadyCheck>();
 
   onCreate() {
-    this.state = new WorldState();
-    this.patchRate = 1000 / PATCH_RATE;
-    this.enemies = new Enemies(this);
-    this.combat = new Combat(this, this.enemies);
-    const ev = createStepEvents();
-
-    this.setFixedTimestep((ctx) => {
-      this.state.players.forEach((player, sid) => {
-        // One input == one fixed step, exactly as the client predicted it.
-        for (const input of this.inputs.get(sid)) {
-          const wasDown = player.downTime > 0;
-          stepMovement(player, input, ctx.dt, world, ev);
-          if (wasDown && player.downTime === 0) player.hp = player.maxHp;
-          this.combat.resolve(sid, player, ev, input.yaw, input.pitch);
-          if (ev.ability1 && !this.combat.ability(sid, player)) this.explainAbility(sid, player);
-          if (ev.interact) this.interact(sid, player);
-        }
-        player.abilityCooldown = Math.max(0, player.abilityCooldown - ctx.dt);
-        const meta = this.meta.get(sid);
-        if (meta && player.downTime === 0 && player.hp < player.maxHp && this.now() - meta.lastHurt > HP_REGEN_DELAY) {
-          player.hp = Math.min(player.maxHp, player.hp + HP_REGEN * ctx.dt);
-        }
-      });
-      this.enemies.update(ctx.dt);
-      if (this.pendingFx.length) {
-        this.broadcast("fx", this.pendingFx);
-        this.pendingFx = [];
-      }
-    }, TICK_RATE);
-
-    this.clock.setInterval(() => { void this.saveAll(); }, AUTOSAVE_MS);
-
-    // Test accounts only: jump to a spot (for playtests and automated checks).
-    this.onMessage("dev:teleport", (client, msg: { x: number; y: number; z: number }) => {
-      if (!authConfig.devLogin) return;
-      const p = this.state.players.get(client.sessionId);
-      if (!p || ![msg?.x, msg?.y, msg?.z].every(Number.isFinite)) return;
-      p.x = msg.x; p.y = msg.y; p.z = msg.z; p.vx = p.vy = p.vz = 0; p.mode = Mode.Air;
-    });
+    this.setup(WORLD_SPAWNS);
+    this.onMessage("party:ready", (client) => this.markReady(client));
+    this.clock.setInterval(() => this.expireReadyChecks(), 1000);
   }
 
-  // --- Host interface used by enemies and combat ---------------------------------
-
-  now() { return this.clock.currentTime / 1000; }
-
-  fx(e: Fx) { this.pendingFx.push(e); }
-
-  damagePlayer(sid: string, amount: number, knockX: number, knockZ: number, power: number) {
-    const p = this.state.players.get(sid);
-    const meta = this.meta.get(sid);
-    if (!p || !meta || p.downTime > 0) return;
-    meta.lastHurt = this.now();
-    p.hp = Math.max(0, p.hp - amount);
-    p.vx += knockX * power; p.vz += knockZ * power; p.vy = Math.max(p.vy, 5);
-    if (p.mode === Mode.Ground) p.mode = Mode.Air;
-    this.fx({ t: "hurt", id: sid, n: amount });
-    if (p.hp === 0) {
-      p.downTime = DOWN_SECONDS;
-      p.vx = 0; p.vz = 0;
-      this.fx({ t: "down", id: sid });
-      this.notify(sid, `You're down. Recovering at your last safe spot in ${DOWN_SECONDS} seconds.`);
-    }
+  /** A character still in a live dungeon (after a long disconnect) goes back into it. */
+  protected checkJoin(c: StoredCharacter) {
+    const dungeon = Parties.dungeonFor(c.id);
+    if (dungeon) throw new ServerError(409, `dungeon:${dungeon}`);
   }
 
-  awardXp(sid: string, amount: number) {
-    const p = this.state.players.get(sid);
-    if (!p || amount <= 0) return;
-    const before = p.level;
-    p.xp = Math.min(65535, p.xp + amount);
-    p.level = levelForXp(p.xp);
-    if (p.level > before) {
-      this.fx({ t: "level", id: sid, level: p.level });
-      this.notify(sid, p.level >= MAX_LEVEL ? `Level ${p.level}: the Drowned Colossus awaits beyond the rim.` : `Level ${p.level}!`);
-      void this.save(sid);
-    }
+  protected onInteract(sid: string, p: Player) {
+    if (Math.hypot(p.x - SHRINE.x, p.z - SHRINE.z) < SHRINE.radius && Math.abs(p.y - SHRINE.y) < 4) this.awaken(sid, p);
+    else if (Math.hypot(p.x - COLOSSUS.gate.x, p.z - COLOSSUS.gate.z) < COLOSSUS.gate.radius && Math.abs(p.y - COLOSSUS.gate.y) < 6) void this.startReadyCheck(sid);
   }
 
-  private notify(sid: string, text: string) {
-    this.clients.find((c) => c.sessionId === sid)?.send("notice", text);
-  }
-
-  // --- Interactions ---------------------------------------------------------------
-
-  private interact(sid: string, p: Player) {
-    const atShrine = Math.hypot(p.x - SHRINE.x, p.z - SHRINE.z) < SHRINE.radius && Math.abs(p.y - SHRINE.y) < 4;
-    if (!atShrine) return;
+  private awaken(sid: string, p: Player) {
     const mantle = MANTLES.find((m) => m.id === p.mantle)?.name ?? "Your";
     if (p.mantleAwakened) { this.notify(sid, `Your ${mantle} mantle is already awake.`); return; }
     p.mantleAwakened = 1;
@@ -146,85 +53,76 @@ export class WorldRoom extends Room<{ state: WorldState; input: MoveInput }> imp
     void this.save(sid);
   }
 
-  private explainAbility(sid: string, p: Player) {
-    if (!p.mantleAwakened) this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
-  }
+  // --- The Colossus gate: ready check, then a private dungeon for the party -------------
 
-  // --- Joining, leaving, saving -------------------------------------------------------
+  private async startReadyCheck(sid: string) {
+    const me = this.meta.get(sid);
+    if (!me) return;
+    if (!Parties.isLeader(me.characterId)) { this.notify(sid, "Only your party leader can lead the party through the gate."); return; }
+    if (this.readyChecks.has(me.characterId)) return;
+    const members = Parties.members(me.characterId);
 
-  onJoin(client: Client) {
-    const { character } = client.auth as JoinAuth;
-    onlineCharacters.add(character.id);
-    this.meta.set(client.sessionId, { characterId: character.id, lastHurt: -100 });
+    // Everyone must be here, at the gate, and experienced enough.
+    for (const id of members) {
+      const msid = this.sessionOfCharacter(id);
+      const mp = msid ? this.state.players.get(msid) : undefined;
+      const name = Parties.nameOf(id);
+      if (!msid || !mp) { this.notify(sid, `${name} isn't in this part of the world. Gather everyone at the gate first.`); return; }
+      if (Math.hypot(mp.x - COLOSSUS.gate.x, mp.z - COLOSSUS.gate.z) > GATHER_RADIUS || Math.abs(mp.y - COLOSSUS.gate.y) > 10) {
+        this.notify(sid, `Wait for ${name} to reach the gate.`); return;
+      }
+      if (mp.level < COLOSSUS.minLevel) { this.notify(sid, `${name} needs to reach level ${COLOSSUS.minLevel} to face the Colossus.`); return; }
+      if (mp.downTime > 0) { this.notify(sid, `${name} is down.`); return; }
+    }
 
-    const player = new Player();
-    const spawn = character.position ?? {
-      x: world.spawn.x + (Math.random() - 0.5) * 8,
-      y: world.spawn.y,
-      z: world.spawn.z + (Math.random() - 0.5) * 8,
-    };
-    Object.assign(player, createMoveState({ x: spawn.x, y: spawn.y + 0.5, z: spawn.z }));
-    player.name = character.name;
-    player.classId = character.classId;
-    player.origin = character.origin;
-    player.mantle = character.mantle;
-    player.skin = character.appearance.skin;
-    player.hair = character.appearance.hair;
-    player.outfit = character.appearance.outfit;
-    player.maxHp = PLAYER_MAX_HP;
-    player.hp = PLAYER_MAX_HP;
-    player.xp = character.xp;
-    player.level = levelForXp(character.xp);
-    player.mantleAwakened = character.mantleAwakened ? 1 : 0;
-    this.state.players.set(client.sessionId, player);
-    console.log(`[world ${this.roomId}] ${player.name} joined (${this.clients.length}/${this.maxClients})`);
-  }
-
-  /** Connection lost without leaving: hold their place briefly so they can reconnect. */
-  async onDrop(client: Client) {
-    const player = this.state.players.get(client.sessionId);
-    if (player) player.away = 1;
-    await this.save(client.sessionId);
-    this.allowReconnection(client, RECONNECT_SECONDS);
-  }
-
-  onReconnect(client: Client) {
-    const player = this.state.players.get(client.sessionId);
-    if (player) player.away = 0;
-    console.log(`[world ${this.roomId}] ${player?.name ?? client.sessionId} reconnected`);
-  }
-
-  async onLeave(client: Client) {
-    await this.save(client.sessionId);
-    const player = this.state.players.get(client.sessionId);
-    this.state.players.delete(client.sessionId);
-    const meta = this.meta.get(client.sessionId);
-    if (meta) onlineCharacters.delete(meta.characterId);
-    this.meta.delete(client.sessionId);
-    this.combat.forget(client.sessionId);
-    console.log(`[world ${this.roomId}] ${player?.name ?? client.sessionId} left`);
-  }
-
-  async onDispose() {
-    await this.saveAll();
-  }
-
-  /** Save progress and where the player last stood safely (never mid-air or over the sea). */
-  private async save(sessionId: string) {
-    const meta = this.meta.get(sessionId);
-    const p = this.state.players.get(sessionId);
-    if (!meta || !p) return;
-    try {
-      await store.saveProgress(meta.characterId, {
-        x: p.safeX, y: p.safeY, z: p.safeZ,
-        xp: p.xp, level: p.level, mantleAwakened: p.mantleAwakened === 1,
-      });
-    } catch (err) {
-      console.error(`Could not save character ${meta.characterId}:`, err);
+    const check: ReadyCheck = { members, ready: new Set([me.characterId]), expires: this.now() + READY_SECONDS };
+    this.readyChecks.set(me.characterId, check);
+    if (members.length === 1) { await this.launch(check); return; }
+    for (const id of members) {
+      const msid = this.sessionOfCharacter(id)!;
+      if (id === me.characterId) this.notify(msid, "Ready check sent. Waiting for your party…");
+      else this.clientOf(msid)?.send("ready-check", { leader: Parties.nameOf(me.characterId), seconds: READY_SECONDS });
     }
   }
 
-  private async saveAll() {
-    await Promise.all([...this.meta.keys()].map((sid) => this.save(sid)));
+  private async markReady(client: Client) {
+    const me = this.meta.get(client.sessionId);
+    if (!me) return;
+    for (const [leader, check] of this.readyChecks) {
+      if (!check.members.includes(me.characterId)) continue;
+      check.ready.add(me.characterId);
+      const lsid = this.sessionOfCharacter(leader);
+      if (lsid) this.notify(lsid, `${Parties.nameOf(me.characterId)} is ready (${check.ready.size}/${check.members.length}).`);
+      if (check.ready.size === check.members.length) await this.launch(check);
+      return;
+    }
+  }
+
+  private expireReadyChecks() {
+    const now = this.now();
+    for (const [leader, check] of this.readyChecks) {
+      if (check.expires > now) continue;
+      this.readyChecks.delete(leader);
+      for (const id of check.members) {
+        const sid = this.sessionOfCharacter(id);
+        if (sid) this.notify(sid, "The ready check timed out.");
+      }
+    }
+  }
+
+  private async launch(check: ReadyCheck) {
+    const leader = check.members[0];
+    for (const [l, c] of this.readyChecks) if (c === check) this.readyChecks.delete(l);
+    // Everyone must still be here.
+    const sessions = check.members.map((id) => this.sessionOfCharacter(id));
+    if (sessions.some((s) => !s)) {
+      for (const s of sessions) if (s) this.notify(s, "Someone left before the party could enter.");
+      return;
+    }
+    const room = await matchMaker.createRoom("colossus", { allowed: check.members, worldRoomId: this.roomId });
+    Parties.markTransfer(check.members);
+    Parties.setDungeon(check.members, room.roomId);
+    for (const sid of sessions) this.clientOf(sid!)?.send("transfer", { roomId: room.roomId, kind: "colossus" });
+    console.log(`[world ${this.roomId}] party of ${check.members.length} (leader ${Parties.nameOf(leader)}) entered colossus ${room.roomId}`);
   }
 }

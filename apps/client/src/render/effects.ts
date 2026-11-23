@@ -10,7 +10,7 @@ import { mat } from "./character.ts";
 
 type RingKind = Extract<Fx, { t: "ring" }>["kind"];
 const RING_COLORS: Record<RingKind, string> = {
-  impact: "#ffffff", tide: "#5cc8ff", titan: "#ff9b3d", shrine: "#ffd36b", telegraph: "#ff5a4a",
+  impact: "#ffffff", tide: "#5cc8ff", titan: "#ff9b3d", shrine: "#ffd36b", telegraph: "#ff5a4a", revive: "#9fe8a8",
 };
 
 interface Ring { mesh: Mesh; t: number; life: number; r: number; inward: boolean }

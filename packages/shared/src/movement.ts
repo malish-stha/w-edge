@@ -22,6 +22,8 @@ export const Buttons = {
   AttackPressed: 32,
   Ability1Pressed: 64,
   InteractPressed: 128,
+  /** E held down (reviving a teammate). */
+  InteractHeld: 256,
 } as const;
 
 /** What happened during one step that the server must resolve (hits, skills, interactions). */

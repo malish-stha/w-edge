@@ -4,13 +4,12 @@
  */
 import {
   ATTACKS, ENEMY_SIZE, HORIZON_BREAK, MANTLE_SKILLS, Mode,
-  getWorld, raycast, type StepEvents,
+  raycast, type StepEvents,
 } from "@worlds-edge/shared";
 import type { Enemies } from "./enemies.ts";
 import type { Host } from "./enemies.ts";
 import type { Player } from "./schema.ts";
 
-const world = getWorld();
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 export class Combat {
@@ -41,14 +40,14 @@ export class Combat {
       // Arrow: a ray along the camera's aim, stopped by terrain.
       const cp = Math.cos(pitch);
       const dir = { x: Math.sin(yaw) * cp, y: Math.sin(pitch), z: Math.cos(yaw) * cp };
-      const wall = raycast(world, { x: cx, y: cy, z: cz }, dir, prof.reach);
+      const wall = raycast(this.host.world, { x: cx, y: cy, z: cz }, dir, prof.reach);
       let best: { id: string; along: number } | null = null;
       this.host.state.enemies.forEach((e, id) => {
         if (e.state === 6) return;
         const size = ENEMY_SIZE[e.kind];
         const ex = e.x - cx, ey = e.y + size.height / 2 - cy, ez = e.z - cz;
         const along = ex * dir.x + ey * dir.y + ez * dir.z;
-        if (along < 0 || along > wall) return;
+        if (along < 0 || along - size.radius > wall) return;
         const off = Math.hypot(ex - dir.x * along, ey - dir.y * along, ez - dir.z * along);
         if (off < size.radius + 0.5 && (!best || along < best.along)) best = { id, along };
       });

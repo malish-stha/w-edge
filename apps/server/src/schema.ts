@@ -38,6 +38,10 @@ export const Player = schema({
   xp: t.uint16(),
   mantleAwakened: t.uint8(),
   abilityCooldown: t.float32(),
+  /** Party id ("" when solo). */
+  party: t.string(),
+  /** 0..1 while a teammate is reviving this (downed) player. */
+  reviveProgress: t.float32(),
 }, "Player");
 export type Player = SchemaType<typeof Player>;
 
@@ -54,9 +58,34 @@ export const Enemy = schema({
 }, "Enemy");
 export type Enemy = SchemaType<typeof Enemy>;
 
+/** The Drowned Colossus encounter (unused in the overworld). */
+export const Boss = schema({
+  /** BossPhase */
+  phase: t.uint8(),
+  hp: t.float32(),
+  maxHp: t.uint16(),
+  armour: t.float32(),
+  maxArmour: t.uint16(),
+  /** Seconds the heart stays exposed (0 = armoured). */
+  exposed: t.float32(),
+  anchorsLeft: t.uint8(),
+  /** Wave progress 0..1 while a wave crosses the arena, else -1. */
+  wave: t.float32(),
+  waveDirX: t.float32(), waveDirZ: t.float32(),
+  /** Arm slam: target and seconds until it lands (-1 when idle). */
+  slamX: t.float32(), slamZ: t.float32(), slamT: t.float32(),
+  /** Arm sweep around the Colossus: seconds until it lands (-1 when idle). */
+  sweepT: t.float32(),
+  objective: t.string(),
+  /** Seconds since the encounter started (for the result screen). */
+  elapsed: t.float32(),
+}, "Boss");
+export type Boss = SchemaType<typeof Boss>;
+
 export const WorldState = schema({
   players: t.map(Player),
   enemies: t.map(Enemy),
+  boss: Boss,
 }, "WorldState");
 export type WorldState = SchemaType<typeof WorldState>;
 
@@ -66,6 +95,6 @@ export const MoveInput = schema({
   moveZ: t.int8(),
   yaw: t.float32(),
   pitch: t.float32(),
-  buttons: t.uint8(),
+  buttons: t.uint16(),
 }, "MoveInput");
 export type MoveInput = SchemaType<typeof MoveInput>;

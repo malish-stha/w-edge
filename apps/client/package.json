@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@babylonjs/core": "^9.37.1",
+    "@babylonjs/loaders": "^9.37.1",
     "@colyseus/sdk": "^0.18.10",
     "@worlds-edge/shared": "^0.1.0"
   },

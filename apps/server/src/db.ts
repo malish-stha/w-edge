@@ -3,7 +3,7 @@
  * in-process Postgres (WASM) stored under ./data, so local development needs no
  * database install. Both run the same SQL.
  */
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { CharacterDraft, CharacterSummary } from "@worlds-edge/shared";
 
@@ -37,9 +37,35 @@ CREATE TABLE IF NOT EXISTS characters (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS mantle_awakened BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS colossus_clears INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS dungeon_clears (
+  run_id TEXT NOT NULL,
+  character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+  cleared_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (run_id, character_id)
+);
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_unique ON characters (lower(name));
 CREATE INDEX IF NOT EXISTS characters_account ON characters (account_id);
 `;
+
+/**
+ * PGlite is single-process: two servers opening the same folder corrupt it.
+ * Refuse to start if another live process holds the lock.
+ */
+function lockDataDir(lockFile: string): () => void {
+  if (existsSync(lockFile)) {
+    const pid = Number(readFileSync(lockFile, "utf8"));
+    let alive = false;
+    try { if (pid && pid !== process.pid) { process.kill(pid, 0); alive = true; } } catch { /* not running: stale lock */ }
+    if (alive) {
+      throw new Error(`Another server (process ${pid}) is already using ${lockFile.replace(/\.lock$/, "")}. Stop it, or set DATA_DIR to a different folder.`);
+    }
+  }
+  writeFileSync(lockFile, String(process.pid));
+  const release = () => { try { if (readFileSync(lockFile, "utf8") === String(process.pid)) unlinkSync(lockFile); } catch { /* already gone */ } };
+  process.once("exit", release);
+  return release;
+}
 
 export async function openSql(): Promise<Sql> {
   let sql: Sql;
@@ -59,12 +85,13 @@ export async function openSql(): Promise<Sql> {
   } else {
     const dir = resolve(process.env.DATA_DIR ?? "data", "pglite");
     mkdirSync(dir, { recursive: true });
+    const releaseLock = lockDataDir(`${dir}.lock`);
     const { PGlite } = await import("@electric-sql/pglite");
     const db = await PGlite.create(dir);
     sql = {
       async query<T>(text: string, params?: unknown[]) { return (await db.query<T>(text, params)).rows; },
       async exec(text) { await db.exec(text); },
-      async close() { await db.close(); },
+      async close() { await db.close(); releaseLock(); },
     };
     console.log(`Database: PGlite at ${dir}`);
   }
@@ -172,6 +199,25 @@ export class Store {
   async deleteCharacter(id: number, accountId: number): Promise<boolean> {
     const rows = await this.sql.query(`DELETE FROM characters WHERE id = $1 AND account_id = $2 RETURNING id`, [id, accountId]);
     return rows.length > 0;
+  }
+
+  /**
+   * Record a dungeon clear and grant its reward in ONE statement, so the reward
+   * can't be claimed twice for the same run (reconnecting, double messages).
+   * Returns the character's new XP, or null if this run was already rewarded.
+   */
+  async grantClear(runId: string, characterId: number, xp: number): Promise<number | null> {
+    const rows = await this.sql.query<{ xp: number }>(
+      `WITH ins AS (
+         INSERT INTO dungeon_clears (run_id, character_id) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING RETURNING character_id
+       )
+       UPDATE characters SET xp = LEAST(xp + $3, 65535), colossus_clears = colossus_clears + 1, updated_at = now()
+       WHERE id IN (SELECT character_id FROM ins)
+       RETURNING xp`,
+      [runId, characterId, xp],
+    );
+    return rows[0]?.xp ?? null;
   }
 
   async saveProgress(id: number, p: Progress): Promise<void> {

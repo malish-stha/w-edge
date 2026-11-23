@@ -40,9 +40,11 @@ export function buildWorldMesh(scene: Scene, world: World): Mesh {
   };
 
   for (const b of world.boxes) {
+    // Colliders and skinned blocks are drawn with pack models (render/dressing.ts), never as boxes.
+    if (b.hidden || b.skin) continue;
     const [r, g, bl] = hexToRgb(b.color);
     const vary = jitter(); // painted colour variation per block
-    const glow = b.tag === "beacon" || b.tag === "shrine" ? 1.25 : 1;
+    const glow = b.tag === "beacon" || b.tag === "shrine" || b.tag === "gate" ? 1.25 : 1;
     const xs = [b.minX, b.maxX], ys = [b.minY, b.maxY], zs = [b.minZ, b.maxZ];
     for (const face of FACES) {
       const base = positions.length / 3;
@@ -77,11 +79,12 @@ export function buildWorldMesh(scene: Scene, world: World): Mesh {
 }
 
 export interface Environment {
-  update(cameraPos: Vector3, timeSeconds: number): void;
+  /** `world` is the current static world mesh (overworld or dungeon arena). */
+  update(cameraPos: Vector3, timeSeconds: number, world: Mesh): void;
 }
 
 /** Sky dome, ocean that follows the camera, and the waterfall curtain at the rim. */
-export function buildEnvironment(scene: Scene, world: Mesh, oceanSubdivisions: number): Environment {
+export function buildEnvironment(scene: Scene, oceanSubdivisions: number): Environment {
   scene.clearColor = new Color4(FOG.r, FOG.g, FOG.b, 1);
 
   // Sky.
@@ -129,16 +132,15 @@ export function buildEnvironment(scene: Scene, world: Mesh, oceanSubdivisions: n
   fall.isPickable = false;
   fall.freezeWorldMatrix();
 
-  const worldMat = world.material as ShaderMaterial;
   return {
-    update(cameraPos, t) {
+    update(cameraPos, t, world) {
       ocean.position.x = Math.round(cameraPos.x / cell) * cell;
       ocean.position.z = Math.round(cameraPos.z / cell) * cell;
       oceanMat.setFloat("time", t);
       oceanMat.setVector3("cameraPos", cameraPos);
       fallMat.setFloat("time", t);
       fallMat.setVector3("cameraPos", cameraPos);
-      worldMat.setVector3("cameraPos", cameraPos);
+      (world.material as ShaderMaterial).setVector3("cameraPos", cameraPos);
     },
   };
 }

@@ -13,12 +13,19 @@
     "typecheck": "tsc -p packages/shared && tsc -p apps/server --noEmit && tsc -p apps/client --noEmit",
     "test": "npm run test -w @worlds-edge/shared",
     "bot": "tsx scripts/bot.ts",
-    "combat-bot": "tsx scripts/combat-bot.ts"
+    "combat-bot": "tsx scripts/combat-bot.ts",
+    "dungeon-bot": "tsx scripts/dungeon-bot.ts",
+    "fetch-assets": "tsx scripts/fetch-assets.ts",
+    "build-env": "tsx scripts/build-env.ts"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
     "@types/node": "^26.6.6",
     "concurrently": "^10.0.7",
     "esbuild": "^0.28.2",
+    "obj2gltf": "^3.2.0",
     "playwright-core": "^1.65.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"

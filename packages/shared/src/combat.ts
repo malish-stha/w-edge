@@ -85,6 +85,9 @@ export const ENEMY_KINDS: Record<string, EnemyKind> = {
   hullbreaker: { name: "Hullbreaker", hp: 220, guard: 90, xp: 60, speed: 3, aggroRange: 22, respawnSeconds: 45 },
   /** Training-yard target: never attacks, resets when left alone. */
   dummy: { name: "Training dummy", hp: 400, guard: 60, xp: 0, speed: 0, aggroRange: 0, respawnSeconds: 0 },
+  /** Drowned Colossus: the chain anchors (phase 1) and the heart (phases 3–4). Run by the dungeon. */
+  anchor: { name: "Anchor", hp: 110, guard: 0, xp: 0, speed: 0, aggroRange: 0, respawnSeconds: 0 },
+  heart: { name: "Drowned Colossus", hp: 1200, guard: 380, xp: 0, speed: 0, aggroRange: 0, respawnSeconds: 0 },
 };
 
 /** Rough body sizes for hit tests and effects. */
@@ -92,6 +95,8 @@ export const ENEMY_SIZE: Record<string, { radius: number; height: number }> = {
   wretch: { radius: 0.8, height: 1.1 },
   hullbreaker: { radius: 1.6, height: 2.8 },
   dummy: { radius: 0.6, height: 1.9 },
+  anchor: { radius: 1.2, height: 3.5 },
+  heart: { radius: 4.2, height: 8 },
 };
 
 // --- Effects the server broadcasts (one batch per tick) ------------------------
@@ -102,7 +107,7 @@ export type Fx =
   /** Damage to a player. */
   | { t: "hurt"; id: string; n: number }
   | { t: "shot"; from: [number, number, number]; to: [number, number, number] }
-  | { t: "ring"; x: number; y: number; z: number; r: number; kind: "impact" | "tide" | "titan" | "shrine" | "telegraph" }
+  | { t: "ring"; x: number; y: number; z: number; r: number; kind: "impact" | "tide" | "titan" | "shrine" | "telegraph" | "revive" }
   | { t: "bolt"; pts: number[] }
   | { t: "down"; id: string }
   | { t: "kill"; x: number; y: number; z: number; xp: number }

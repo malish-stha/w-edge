@@ -1,9 +1,10 @@
 import {
-  ENEMY_KINDS, ENEMY_SIZE, EnemyState, LEVEL_XP, MANTLE_SKILLS, MANTLES, MAX_LEVEL, Mode, RIM_Z, SHRINE, STAMINA_MAX, levelProgress,
+  BossPhase, ENEMY_KINDS, ENEMY_SIZE, EnemyState, LEVEL_XP, MANTLE_SKILLS, MAX_LEVEL, Mode, RIM_Z, STAMINA_MAX, levelProgress,
 } from "@worlds-edge/shared";
-import type { EnemyView, PlayerView } from "./session.ts";
+import type { BossView, EnemyView, PlayerView, Roster } from "./session.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 const MODE_LABELS: Record<number, string> = {
   [Mode.Ground]: "Walking",
@@ -107,11 +108,44 @@ export class Hud {
       : self.abilityCooldown >= 0.05 ? `${self.abilityCooldown.toFixed(1)} s` : "Ready";
     this.abilityCd.style.width = locked || !skill ? "0" : `${(1 - self.abilityCooldown / skill.cooldown) * 100}%`;
 
-    // Context prompt at the shrine.
-    const atShrine = online && Math.hypot(self.x - SHRINE.x, self.z - SHRINE.z) < SHRINE.radius && Math.abs(self.y - SHRINE.y) < 4;
-    const mantle = MANTLES.find((m) => m.id === self.mantle)?.name ?? "your";
-    this.prompt.hidden = !(atShrine && !self.mantleAwakened);
-    if (!this.prompt.hidden) this.prompt.innerHTML = `<kbd>E</kbd>Awaken the ${mantle} mantle`;
+  }
+
+  /** The context prompt near the middle of the screen (key + text), or null to hide it. */
+  setPrompt(prompt: { key?: string; text: string } | null) {
+    this.prompt.hidden = !prompt;
+    if (!prompt) return;
+    const html = `${prompt.key ? `<kbd>${prompt.key}</kbd>` : ""}${escapeHtml(prompt.text)}`;
+    if (this.prompt.innerHTML !== html) this.prompt.innerHTML = html;
+  }
+
+  /** Teammates' frames: name, level, health, and revive progress when down. */
+  updateParty(roster: Roster | null, players: PlayerView[], selfId: string) {
+    const frames = $("party-frames");
+    if (!roster) { if (frames.childElementCount) frames.replaceChildren(); return; }
+    const rows = roster.members.filter((m) => m.sessionId !== selfId).map((m) => {
+      const p = players.find((x) => x.id === m.sessionId);
+      const down = !!p && p.downTime > 0;
+      const hp = p ? p.hp / (p.maxHp || 1) : 0;
+      return `<div class="party-frame${down ? " down" : ""}">
+        <div class="row1"><span class="${m.leader ? "leader" : ""}">${escapeHtml(m.name)}</span><span>${p ? (down ? "down" : `Lv ${p.level}`) : "elsewhere"}</span></div>
+        ${p ? `<div class="bar hp${hp < 0.3 ? " low" : ""}"><div style="width:${hp * 100}%"></div></div>` : ""}
+        ${down && p!.reviveProgress > 0 ? `<div class="bar revive"><div style="width:${p!.reviveProgress * 100}%"></div></div>` : ""}
+      </div>`;
+    }).join("");
+    if (frames.innerHTML !== rows) frames.innerHTML = rows;
+  }
+
+  updateBoss(boss: BossView | null) {
+    const el = $("boss");
+    el.hidden = !boss;
+    this.compass.hidden = !!boss;
+    if (!boss) return;
+    $("boss-hp").style.width = `${(boss.hp / (boss.maxHp || 1)) * 100}%`;
+    const armoured = boss.phase === BossPhase.Heart && boss.exposed <= 0;
+    $("boss-armour").parentElement!.style.visibility = armoured ? "visible" : "hidden";
+    $("boss-armour").style.width = `${(boss.armour / (boss.maxArmour || 1)) * 100}%`;
+    const objective = boss.phase === BossPhase.Heart && boss.exposed > 0 ? `${boss.objective} (${Math.ceil(boss.exposed)} s)` : boss.objective;
+    if ($("boss-objective").textContent !== objective) $("boss-objective").textContent = objective;
   }
 
   notice(text: string, kind: "" | "level" = "") {

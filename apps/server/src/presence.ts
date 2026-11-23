@@ -4,3 +4,4 @@
  * to Colyseus presence (Redis).
  */
 export const onlineCharacters = new Set<number>();
+

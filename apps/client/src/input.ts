@@ -105,6 +105,7 @@ export class Input {
     if (this.attackQueued || this.mouseDown) buttons |= Buttons.AttackPressed;
     if (this.abilityQueued) buttons |= Buttons.Ability1Pressed;
     if (this.interactQueued) buttons |= Buttons.InteractPressed;
+    if (this.held("KeyE")) buttons |= Buttons.InteractHeld;
     this.clearPresses();
     const moveZ = (this.held("KeyW", "ArrowUp") ? 100 : 0) - (this.held("KeyS", "ArrowDown") ? 100 : 0);
     const moveX = (this.held("KeyD", "ArrowRight") ? 100 : 0) - (this.held("KeyA", "ArrowLeft") ? 100 : 0);

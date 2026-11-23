@@ -6,8 +6,10 @@
  * deterministic, and matches the chunky, stepped art direction.
  */
 import { RIM_Z, SEA_LEVEL } from "./constants.ts";
+import { ISLES, dressOverworld, type DressedArea } from "./dressing.ts";
+import { SKINS, type Skin } from "./skins.ts";
 
-export type Region = "harbour" | "isles" | "rim" | "settlement";
+export type Region = "harbour" | "isles" | "rim" | "settlement" | "arena";
 
 export interface Box {
   minX: number; minY: number; minZ: number;
@@ -16,7 +18,11 @@ export interface Box {
   color: string;
   region: Region;
   /** Landmark tag for the client (beacon, shrine, ...). */
-  tag?: "beacon" | "shrine" | "training" | "anchor" | "dock";
+  tag?: "beacon" | "shrine" | "training" | "dock" | "gate";
+  /** Collision only (a prop's collider): not drawn. */
+  hidden?: boolean;
+  /** Drawn with pack models instead of a plain box (see skins.ts). */
+  skin?: Skin;
 }
 
 export interface Vec3 { x: number; y: number; z: number }
@@ -27,6 +33,8 @@ export interface World {
   boxes: Box[];
   spawn: Vec3;
   landmarks: Landmark[];
+  /** Asset-pack dressing per area (one pack per island). */
+  areas: DressedArea[];
 }
 
 /** Small deterministic PRNG (mulberry32). */
@@ -54,6 +62,9 @@ function box(
   };
 }
 
+/** Give a block its pack-model skin. */
+const sk = (b: Box, skin: Skin): Box => ({ ...b, skin });
+
 // District palettes: each district gets a distinct skyline colour set.
 const HARBOUR_WALLS = ["#e8d9b5", "#dcc79a", "#f0e4c8", "#cdb98c"];
 const HARBOUR_ROOFS = ["#c8553d", "#d9774b", "#b8473a", "#e09a4f"];
@@ -68,26 +79,26 @@ const WOOD = "#8b6a4a";
 
 function buildHarbour(out: Box[], r: () => number) {
   // Main island: a faceted cliff block rising out of the sea, with a lower shelf.
-  out.push(box(0, -30, 0, 220, 3, 200, CLIFF, "harbour"));
-  out.push(box(0, -30, 105, 160, 1.5, 30, CLIFF_DARK, "harbour"));
+  out.push(sk(box(0, -30, 0, 220, 3, 200, CLIFF, "harbour"), SKINS.cliff));
+  out.push(sk(box(0, -30, 105, 160, 1.5, 30, CLIFF_DARK, "harbour"), SKINS.cliff));
   // Grass top layer.
-  out.push(box(0, 3, -10, 200, 3.2, 170, GRASS, "harbour"));
+  out.push(sk(box(0, 3, -10, 200, 3.2, 170, GRASS, "harbour"), SKINS.castleGround));
 
   // Central plaza.
-  out.push(box(0, 3.2, 20, 50, 3.4, 40, PLAZA, "harbour"));
+  out.push(sk(box(0, 3.2, 20, 50, 3.4, 40, PLAZA, "harbour"), SKINS.stonePath));
 
   // Training yard (west) with low walls and a shrine.
-  out.push(box(-60, 3.2, 30, 40, 3.4, 36, "#c9b48f", "harbour", "training"));
-  out.push(box(-80, 3.4, 30, 1, 4.6, 36, STONE, "harbour"));
-  out.push(box(-60, 3.4, 48, 40, 4.6, 1, STONE, "harbour"));
-  out.push(box(-60, 3.4, 12, 40, 4.6, 1, STONE, "harbour"));
-  out.push(box(-45, 3.4, 30, 4, 5.4, 4, "#d6e4ff", "harbour", "shrine"));
-  out.push(box(-45, 5.4, 30, 2, 8.4, 2, "#8fb0ff", "harbour", "shrine"));
+  out.push(sk(box(-60, 3.2, 30, 40, 3.4, 36, "#c9b48f", "harbour", "training"), SKINS.stonePath));
+  out.push(sk(box(-80, 3.4, 30, 1, 4.6, 36, STONE, "harbour"), SKINS.castleWallNarrow));
+  out.push(sk(box(-60, 3.4, 48, 40, 4.6, 1, STONE, "harbour"), SKINS.castleWallNarrow));
+  out.push(sk(box(-60, 3.4, 12, 40, 4.6, 1, STONE, "harbour"), SKINS.castleWallNarrow));
+  out.push(sk(box(-45, 3.4, 30, 4, 5.4, 4, "#d6e4ff", "harbour", "shrine"), SKINS.shrineBase));
+  out.push(sk(box(-45, 5.4, 30, 2, 8.4, 2, "#8fb0ff", "harbour", "shrine"), SKINS.shrineBase));
 
   // Docks (south), sitting just above the sea.
   for (let i = 0; i < 4; i++) {
     const x = -54 + i * 36;
-    out.push(box(x, SEA_LEVEL - 4, 140, 8, SEA_LEVEL + 1.2, 40, WOOD, "harbour", "dock"));
+    out.push(sk(box(x, SEA_LEVEL - 0.1, 140, 8, SEA_LEVEL + 1.2, 40, WOOD, "harbour", "dock"), SKINS.dock));
   }
 
   // City blocks: stepped buildings on a grid, avoiding plaza and training yard.
@@ -107,43 +118,35 @@ function buildHarbour(out: Box[], r: () => number) {
       const h = (terrace ? 10 : 6) + r() * (terrace ? 12 : 8);
       const wall = HARBOUR_WALLS[Math.floor(r() * HARBOUR_WALLS.length)];
       const roof = roofs[Math.floor(r() * roofs.length)];
-      out.push(box(cx, 3.2, cz, w, 3.2 + h, d, wall, "harbour"));
+      out.push(sk(box(cx, 3.2, cz, w, 3.2 + h, d, wall, "harbour"), SKINS.castleBuilding));
       // Stepped roof: two shrinking layers players can land on.
-      out.push(box(cx, 3.2 + h, cz, w * 0.8, 3.2 + h + 1.4, d * 0.8, roof, "harbour"));
-      if (r() < 0.6) out.push(box(cx, 4.6 + h, cz, w * 0.45, 4.6 + h + 1.6, d * 0.45, roof, "harbour"));
+      out.push(sk(box(cx, 3.2 + h, cz, w * 0.8, 3.2 + h + 1.4, d * 0.8, roof, "harbour"), SKINS.castleRoof));
+      if (r() < 0.6) out.push(sk(box(cx, 4.6 + h, cz, w * 0.45, 4.6 + h + 1.6, d * 0.45, roof, "harbour"), SKINS.castleRoof));
     }
   }
 
   // Upper terrace and beacon tower (north), the first-flight launch point.
-  out.push(box(0, 3.2, -80, 60, 14, 30, STONE, "harbour"));
-  out.push(box(0, 14, -84, 40, 24, 20, "#b0a395", "harbour"));
-  out.push(box(0, 24, -86, 16, 40, 12, "#c4b8aa", "harbour"));
-  out.push(box(0, 40, -86, 8, 44, 8, "#ffd36b", "harbour", "beacon"));
+  out.push(sk(box(0, 3.2, -80, 60, 14, 30, STONE, "harbour"), SKINS.castleWall));
+  out.push(sk(box(0, 14, -84, 40, 24, 20, "#b0a395", "harbour"), SKINS.castleWall));
+  out.push(sk(box(0, 24, -86, 16, 40, 12, "#c4b8aa", "harbour"), SKINS.castleBuilding));
+  out.push(sk(box(0, 40, -86, 8, 44, 8, "#ffd36b", "harbour", "beacon"), SKINS.castleRoof));
   // Stairs up the terrace (walkable thanks to step-up).
   // 18 steps of 0.6 m climb from the street (3.2) to the terrace top (14), ending at its face (z = -65).
   for (let i = 0; i < 18; i++) {
-    out.push(box(0, 3.2, -48.8 - (i + 0.5) * 0.9, 8, 3.2 + (i + 1) * 0.6, 0.9, STONE, "harbour"));
+    out.push(sk(box(0, 3.2, -48.8 - (i + 0.5) * 0.9, 8, 3.2 + (i + 1) * 0.6, 0.9, STONE, "harbour"), SKINS.castleStep));
   }
 }
+
+/** Ruins on each isle use that isle's pack where it has a fitting piece. */
+const ISLE_RUINS: Partial<Record<number, Skin>> = { 6: SKINS.pirateRuin };
 
 function buildIsles(out: Box[], r: () => number) {
   // The Broken Isles: pillars and shelves at different heights between the
   // harbour and the rim.
-  const isles = [
-    { x: 160, z: -300, top: 18, size: 60 },
-    { x: 60, z: -420, top: 40, size: 34 },
-    { x: -120, z: -380, top: 26, size: 46 },
-    { x: -40, z: -600, top: 60, size: 30 },
-    { x: 140, z: -700, top: 32, size: 52 },
-    { x: -180, z: -820, top: 48, size: 40 },
-    { x: 30, z: -980, top: 22, size: 70 },
-    { x: -90, z: -1160, top: 36, size: 38 },
-    { x: 120, z: -1240, top: 54, size: 28 },
-  ];
-  for (const isle of isles) {
+  for (const [index, isle] of ISLES.entries()) {
     const s = isle.size;
-    out.push(box(isle.x, -40, isle.z, s, isle.top, s, CLIFF, "isles"));
-    out.push(box(isle.x, isle.top, isle.z, s * 0.92, isle.top + 0.8, s * 0.92, GRASS, "isles"));
+    out.push(sk(box(isle.x, -40, isle.z, s, isle.top, s, CLIFF, "isles"), SKINS.cliff));
+    out.push(sk(box(isle.x, isle.top, isle.z, s * 0.92, isle.top + 0.8, s * 0.92, GRASS, "isles"), SKINS.grass));
     // Broken shards around each isle.
     const shards = 2 + Math.floor(r() * 3);
     for (let i = 0; i < shards; i++) {
@@ -151,33 +154,31 @@ function buildIsles(out: Box[], r: () => number) {
       const dist = s * (0.8 + r() * 0.6);
       const ss = 5 + r() * 8;
       const top = isle.top * (0.3 + r() * 0.9);
-      out.push(box(isle.x + Math.cos(a) * dist, -30, isle.z + Math.sin(a) * dist, ss, top, ss, CLIFF_DARK, "isles"));
+      out.push(sk(box(isle.x + Math.cos(a) * dist, -30, isle.z + Math.sin(a) * dist, ss, top, ss, CLIFF_DARK, "isles"), SKINS.cliffStone));
     }
     // A ruin on top.
     if (r() < 0.7) {
-      out.push(box(isle.x + (r() - 0.5) * s * 0.4, isle.top + 0.8, isle.z + (r() - 0.5) * s * 0.4, 6, isle.top + 5 + r() * 6, 6, STONE, "isles"));
+      out.push(sk(box(isle.x + (r() - 0.5) * s * 0.4, isle.top + 0.8, isle.z + (r() - 0.5) * s * 0.4, 6, isle.top + 5 + r() * 6, 6, STONE, "isles"), ISLE_RUINS[index] ?? SKINS.rockPillar));
     }
   }
 }
 
 function buildRimAndSettlement(out: Box[]) {
   // The rim itself: a long lip of rock the ocean pours over.
-  out.push(box(0, -40, RIM_Z + 6, 6000, SEA_LEVEL - 1.5, 12, "#5f6f7a", "rim"));
+  out.push(sk(box(0, -40, RIM_Z + 6, 6000, SEA_LEVEL - 1.5, 12, "#5f6f7a", "rim"), { ...SKINS.cliffStone, tile: 30 }));
   // Hidden settlement below the waterfall.
   const sy = -90;
-  out.push(box(0, sy - 30, RIM_Z - 70, 160, sy, 90, "#6f7f88", "settlement"));
-  out.push(box(0, sy, RIM_Z - 60, 30, sy + 0.4, 30, "#c9d7dd", "settlement"));
+  out.push(sk(box(0, sy - 30, RIM_Z - 70, 160, sy, 90, "#6f7f88", "settlement"), SKINS.cliffStone));
+  out.push(sk(box(0, sy, RIM_Z - 60, 30, sy + 0.4, 30, "#c9d7dd", "settlement"), SKINS.caveFloor));
   const houses = [[-50, -40], [-30, -95], [40, -40], [55, -90], [-60, -80], [10, -100]];
   for (const [hx, hz] of houses) {
-    out.push(box(hx, sy, RIM_Z + hz, 12, sy + 7, 10, "#e3e8ea", "settlement"));
-    out.push(box(hx, sy + 7, RIM_Z + hz, 9, sy + 9, 7, "#3f8f9f", "settlement"));
+    out.push(sk(box(hx, sy, RIM_Z + hz, 12, sy + 7, 10, "#e3e8ea", "settlement"), SKINS.caveWall));
+    out.push(sk(box(hx, sy + 7, RIM_Z + hz, 9, sy + 9, 7, "#3f8f9f", "settlement"), SKINS.caveRoof));
   }
-  // Three anchor platforms for the Drowned Colossus arena (placeholder).
-  const ay = sy - 20;
-  for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * Math.PI * 2 + Math.PI / 2;
-    out.push(box(Math.cos(a) * 60, ay - 8, RIM_Z - 230 + Math.sin(a) * 60, 18, ay, 18, "#7c6a55", "settlement", "anchor"));
-  }
+  // The gate to the Drowned Colossus: an arch beyond the plaza where parties ready up.
+  const gz = RIM_Z - 86;
+  for (const side of [-1, 1]) out.push(sk(box(side * 4.5, sy, gz, 1.6, sy + 10, 1.6, "#4f6f7f", "settlement", "gate"), SKINS.caveArch));
+  out.push(sk(box(0, sy + 10, gz, 11, sy + 11.5, 2, "#4f6f7f", "settlement", "gate"), SKINS.caveArch));
 }
 
 let cached: World | undefined;
@@ -189,8 +190,11 @@ export function getWorld(): World {
   buildHarbour(boxes, r);
   buildIsles(boxes, r);
   buildRimAndSettlement(boxes);
+  const dressing = dressOverworld(boxes);
+  boxes.push(...dressing.colliders);
   cached = {
     boxes,
+    areas: dressing.areas,
     spawn: { x: -60, y: 3.4, z: 30 },
     landmarks: [
       { name: "Training yard", position: { x: -60, y: 3.4, z: 30 } },

@@ -71,6 +71,20 @@ export class EnemyRig {
       this.parts.core = box("core", this.body, 0.8, 0.8, 0.3, 0, 1.9, -1.15, mat(scene, "#3a2f28"));
       this.parts.coreLit = box("coreLit", this.body, 0.8, 0.8, 0.3, 0, 1.9, -1.16, mat(scene, "#ffb347", { glow: 1 }));
       (this.parts.coreLit as Mesh).setEnabled(false);
+    } else if (kind === "anchor") {
+      // A great iron mooring post the chains are fastened to.
+      const iron = mat(scene, "#4a4f55"), rust = mat(scene, "#8a5a3a");
+      box("base", this.body, 2.4, 0.6, 2.4, 0, 0.3, 0, iron);
+      box("post", this.body, 1.1, 3.2, 1.1, 0, 2.2, 0, iron);
+      box("cap", this.body, 1.6, 0.5, 1.6, 0, 3.9, 0, rust);
+      for (const y of [1.6, 2.6]) box(`band${y}`, this.body, 1.3, 0.25, 1.3, 0, y, 0, rust);
+    } else if (kind === "heart") {
+      // The Colossus's heart: a pulsing core (the hitbox is larger than it looks).
+      const core = mat(scene, "#ff6a3d", { glow: 1 }), shell = mat(scene, "#7a2f22", { glow: 0.4 });
+      box("core", this.body, 1.8, 1.8, 1.8, 0, 4, 0, core).rotation.set(0.6, 0.6, 0);
+      box("shellA", this.body, 2.4, 0.4, 2.4, 0, 4, 0, shell).rotation.set(0.3, 0.9, 0.2);
+      box("shellB", this.body, 0.4, 2.4, 2.4, 0, 4, 0, shell).rotation.set(0.2, 0.4, 0.5);
+      this.parts.core = this.meshes[0];
     } else {
       // Training dummy: post, crossbar and a straw sack.
       const wood = mat(scene, "#8b6a4a"), straw = mat(scene, "#d9c27a"), cloth = mat(scene, "#b8443a");
@@ -120,6 +134,12 @@ export class EnemyRig {
       lean = e.state === EnemyState.Telegraph ? -0.15 : e.state === EnemyState.Attack ? 0.35 : exposed ? 0.3 : 0;
       (this.parts.coreLit as Mesh).setEnabled(exposed && Math.sin(this.t * 10) > -0.6);
       if (e.state === EnemyState.Telegraph) wobble = Math.sin(this.t * 30) * 0.03;
+    }
+    if (this.kind === "heart") {
+      // Pulses faster when exposed; spins while flying free.
+      const pulse = 1 + Math.sin(this.t * (e.state === EnemyState.Exposed ? 9 : 3)) * 0.08;
+      this.body.scaling.set(pulse, pulse, pulse);
+      this.body.rotation.y += dt * 0.8;
     }
     if (e.state === EnemyState.Stagger) { lean = -0.25; wobble = Math.sin(this.t * 12) * 0.12; }
     this.lean = damp(this.lean, lean, 10, dt);

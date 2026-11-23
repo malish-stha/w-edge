@@ -9,7 +9,11 @@ export class FollowCamera {
   private target = new Vector3();
   private distance = 8;
 
-  constructor(scene: Scene, private world: World) {
+  /** Collision geometry for keeping the camera out of walls; swapped when changing rooms. */
+  world: World;
+
+  constructor(scene: Scene, world: World) {
+    this.world = world;
     this.camera = new TargetCamera("cam", new Vector3(0, 10, -10), scene);
     this.camera.minZ = 0.2;
     this.camera.maxZ = 6000;

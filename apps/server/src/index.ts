@@ -4,6 +4,7 @@ import { createApi } from "./api.ts";
 import { authConfig } from "./auth.ts";
 import { openSql, Store } from "./db.ts";
 import { WorldRoom, useStore } from "./WorldRoom.ts";
+import { ColossusRoom } from "./ColossusRoom.ts";
 
 const port = Number(process.env.PORT ?? 2567);
 
@@ -23,6 +24,8 @@ const server = new Server({
 });
 
 server.define(ROOM_WORLD, WorldRoom);
+// Private party dungeons: created by the world room's gate, never by matchmaking.
+server.define("colossus", ColossusRoom);
 server.onShutdown(async () => { await sql.close(); });
 
 // Simulate round-trip latency in development, e.g. LATENCY=120 npm run dev.

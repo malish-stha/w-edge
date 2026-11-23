@@ -3,7 +3,13 @@ import { Scene } from "@babylonjs/core/scene.js";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
-import { Mode, getWorld, randomDraft, type CharacterDraft, type CharacterSummary, type Fx } from "@worlds-edge/shared";
+import {
+  BossPhase, COLOSSUS, MANTLES, Mode, SHRINE, getWorld, randomDraft,
+  type CharacterDraft, type CharacterSummary, type Fx, type World,
+} from "@worlds-edge/shared";
+import { ColossusRig } from "./render/colossus.ts";
+import { Dressing } from "./render/dressing.ts";
+import { FOG_COLOR } from "./render/shaders.ts";
 import "./render/shaders.ts";
 import { buildEnvironment, buildWorldMesh } from "./render/environment.ts";
 import { CharacterRig, lookKey, type CharacterLook } from "./render/character.ts";
@@ -15,7 +21,10 @@ import { Hud } from "./hud.ts";
 import { Api, ApiError } from "./api.ts";
 import { googleSignOut, renderGoogleButton } from "./google.ts";
 import { Menus, describe } from "./menus.ts";
-import { OfflineSession, OnlineSession, type PlayerView, type Session } from "./session.ts";
+import {
+  DungeonRedirect, OfflineSession, OnlineSession,
+  type Place, type PlayerView, type Roster, type Session,
+} from "./session.ts";
 
 // --- Settings ----------------------------------------------------------------
 
@@ -54,15 +63,31 @@ engine.setHardwareScalingLevel(scaling);
 
 const scene = new Scene(engine);
 scene.skipPointerMovePicking = true;
+// Same fog as the world shader, for everything drawn with standard materials (props, characters).
+scene.fogMode = Scene.FOGMODE_EXP2;
+scene.fogDensity = 1 / 1400;
+scene.fogColor = new Color3(...FOG_COLOR);
 
 const light = new HemisphericLight("sun", new Vector3(0.3, 1, 0.4), scene);
 light.groundColor = new Color3(0.45, 0.5, 0.6);
 
-const world = getWorld();
-const worldMesh = buildWorldMesh(scene, world);
-const env = buildEnvironment(scene, worldMesh, quality.ocean);
+/** The static geometry currently shown: the overworld, or a dungeon arena. */
+let world: World = getWorld();
+let worldMesh = buildWorldMesh(scene, world);
+const env = buildEnvironment(scene, quality.ocean);
+const dressing = new Dressing(scene);
+dressing.setWorld(world);
 const follow = new FollowCamera(scene, world);
 scene.activeCamera = follow.camera;
+
+function setWorld(next: World) {
+  if (next === world) return;
+  worldMesh.dispose(false, true);
+  world = next;
+  worldMesh = buildWorldMesh(scene, next);
+  follow.world = next;
+  dressing.setWorld(next);
+}
 
 const input = new Input(canvas);
 input.forceActive = params.has("test");
@@ -88,15 +113,25 @@ let preview: { rig: CharacterRig; look: CharacterLook; since: number } | null = 
 const PREVIEW_SPOT = { x: -66, y: 3.4, z: 24 };
 
 const enemyRigs = new Map<string, EnemyRig>();
+let colossusRig: ColossusRig | null = null;
 const effects = new Effects(scene);
 /** Latest positions by player id, for placing effects that name a player. */
 const playerPos = new Map<string, { x: number; y: number; z: number }>();
+
+/** The character being played and where to return after a dungeon. */
+let current: { character: CharacterSummary; worldRoomId: string } | null = null;
+let roster: Roster | null = null;
+let pendingInvite: string | null = null;
+let pendingReady: string | null = null;
+let partyPanelOpen = false;
 
 function clearRigs() {
   for (const rig of rigs.values()) rig.dispose();
   for (const rig of enemyRigs.values()) rig.dispose();
   rigs.clear();
   enemyRigs.clear();
+  colossusRig?.dispose();
+  colossusRig = null;
   effects.clear();
   playerPos.clear();
 }
@@ -206,15 +241,24 @@ function showCreate(canGoBack: boolean) {
   });
 }
 
+/** Join the overworld (or a specific room), following the server back into a live dungeon if needed. */
+async function connect(c: CharacterSummary, target?: { roomId: string; place: Place }): Promise<OnlineSession> {
+  try {
+    return await OnlineSession.connect(url!, api!.sessionToken!, c.id, target);
+  } catch (err) {
+    if (err instanceof DungeonRedirect) {
+      hud.notice("Your party is still in the Drowned Colossus — rejoining.");
+      return OnlineSession.connect(url!, api!.sessionToken!, c.id, { roomId: err.roomId, place: "colossus" });
+    }
+    throw err;
+  }
+}
+
 async function play(c: CharacterSummary) {
   menus.loading(`Entering First Harbour as ${c.name}…`);
   try {
-    const online = await OnlineSession.connect(url!, api!.sessionToken!, c.id);
-    online.onDisconnect = (last, reason) => {
-      clearRigs();
-      session = new OfflineSession(c.name, draftLook(c), `${reason}. Use the menu to rejoin.`, last);
-      hud.notice(`Connection lost: ${reason}. You're flying solo until you rejoin from the menu.`);
-    };
+    const online = await connect(c);
+    current = { character: c, worldRoomId: online.place === "world" ? online.roomId : "" };
     enterWorld(online, `${c.name} · ${describe(c)}`);
   } catch (err) {
     const message = (err as Error).message || "Couldn't join the world.";
@@ -224,13 +268,41 @@ async function play(c: CharacterSummary) {
 
 async function playSolo() {
   const draft = randomDraft();
+  current = null;
   enterWorld(new OfflineSession("Traveller", draftLook(draft), url ? "not signed in" : "no server configured"), "Solo flight");
+}
+
+/** Wire a session's server events to the HUD, menus and transfers. */
+function attach(s: Session) {
+  s.onFx = handleFx;
+  s.onNotice = (text) => hud.notice(text);
+  s.onParty = (r) => { roster = r; if (partyPanelOpen) renderPartyPanel(); };
+  s.onInvite = (from) => {
+    pendingInvite = from;
+    hud.notice(`${from} invites you to their party. Press Y to join or N to decline.`);
+  };
+  s.onReadyCheck = (leader) => {
+    pendingReady = leader;
+    hud.notice(`${leader} is ready to face the Drowned Colossus. Press Y when you're ready.`);
+  };
+  s.onTransfer = (roomId, kind) => void transfer(roomId, kind);
+  s.onCleared = (time, xp) => hud.notice(`The Drowned Colossus falls! ${time} · +${xp} XP`, "level");
+  if (s instanceof OnlineSession) {
+    roster = s.roster;
+    const c = current?.character;
+    s.onDisconnect = (last, reason) => {
+      clearRigs();
+      setWorld(getWorld());
+      session = new OfflineSession(c?.name ?? "Traveller", c ? draftLook(c) : draftLook(randomDraft()), `${reason}. Use the menu to rejoin.`, s.place === "world" ? last : undefined);
+      hud.notice(`Connection lost: ${reason}. You're flying solo until you rejoin from the menu.`);
+    };
+  }
 }
 
 function enterWorld(s: Session, title: string) {
   session = s;
-  s.onFx = handleFx;
-  s.onNotice = (text) => hud.notice(text);
+  attach(s);
+  setWorld(s.world);
   phase = "playing";
   setPreview(null);
   menus.hide();
@@ -238,19 +310,139 @@ function enterWorld(s: Session, title: string) {
   input.lock();
   canvas.focus();
   // Pointer lock can be refused (no recent click); the menu then offers a button to start.
-  setTimeout(() => { if (phase === "playing" && !input.locked) menu.hidden = false; }, 300);
+  setTimeout(() => { if (phase === "playing" && !input.locked && !partyPanelOpen) menu.hidden = false; }, 300);
+}
+
+/** Move between the overworld and a dungeon: leave this room, join the next. */
+async function transfer(roomId: string, kind: "world" | "colossus") {
+  if (!current || !(session instanceof OnlineSession)) return;
+  const fade = document.getElementById("fade")!;
+  fade.classList.add("on");
+  const from = session;
+  if (from.place === "world") current.worldRoomId = from.roomId;
+  pendingReady = null;
+  session = null;
+  clearRigs();
+  await from.dispose();
+  try {
+    const target = kind === "colossus" ? { roomId, place: "colossus" as const } : { roomId: roomId || current.worldRoomId, place: "world" as const };
+    const next = await connect(current.character, target);
+    if (next.place === "world") current.worldRoomId = next.roomId;
+    session = next;
+    attach(next);
+    setWorld(next.world);
+    if (next.place === "colossus") hud.notice("You arrive before the Drowned Colossus. Break the anchors chaining it upright!");
+  } catch (err) {
+    hud.notice(`Couldn't get there: ${(err as Error).message}. Rejoining the world.`);
+    const back = await connect(current.character).catch(() => null);
+    if (back) { session = back; attach(back); setWorld(back.world); }
+    else await leaveWorld().then(() => showCharacters("Lost the connection.")).catch(() => boot());
+  } finally {
+    fade.classList.remove("on");
+  }
 }
 
 async function leaveWorld() {
   phase = "title";
   menu.hidden = true;
+  closePartyPanel(false);
   hud.hide();
   const s = session;
   session = null;
+  roster = null;
+  pendingInvite = null;
+  pendingReady = null;
   clearRigs();
+  setWorld(getWorld());
   if (document.pointerLockElement) document.exitPointerLock();
   await s?.dispose();
 }
+
+// --- Party panel (P) and quick replies (Y / N) -----------------------------------------
+
+const partyPanel = document.getElementById("party-panel") as HTMLDivElement;
+/** Players already invited from the panel (kept across refreshes). */
+const invited = new Set<string>();
+let partyPanelRendered = 0;
+
+function renderPartyPanel() {
+  partyPanelRendered = performance.now();
+  const s = session;
+  const members = document.getElementById("party-members")!;
+  const nearby = document.getElementById("party-nearby")!;
+  const selfId = s instanceof OnlineSession ? s.sessionId : "";
+  members.replaceChildren(...(roster?.members ?? []).map((m) => {
+    const li = document.createElement("li");
+    li.className = "character";
+    li.innerHTML = `<span class="who"><strong class="${m.leader ? "leader" : ""}"></strong><small>${m.sessionId === selfId ? "You" : m.roomId ? "Online" : "Away"}</small></span>`;
+    li.querySelector("strong")!.textContent = m.name;
+    return li;
+  }));
+  document.getElementById("party-empty")!.hidden = !!roster;
+  (document.getElementById("party-leave") as HTMLButtonElement).hidden = !roster;
+
+  const inParty = new Set((roster?.members ?? []).map((m) => m.sessionId));
+  const others = (s?.players() ?? []).filter((p) => !p.isSelf && !inParty.has(p.id));
+  const me = s?.self();
+  others.sort((a, b) => (me ? Math.hypot(a.x - me.x, a.z - me.z) - Math.hypot(b.x - me.x, b.z - me.z) : 0));
+  nearby.replaceChildren(...others.slice(0, 12).map((p) => {
+    const li = document.createElement("li");
+    li.className = "character";
+    const dist = me ? Math.round(Math.hypot(p.x - me.x, p.z - me.z)) : 0;
+    li.innerHTML = `<span class="who"><strong></strong><small>Level ${p.level} · ${dist} m away</small></span>`;
+    li.querySelector("strong")!.textContent = p.name;
+    const invite = document.createElement("button");
+    invite.className = "secondary";
+    invite.textContent = invited.has(p.id) ? "Invited" : "Invite";
+    invite.disabled = invited.has(p.id);
+    invite.onclick = () => { (session as OnlineSession).send("party:invite", { sessionId: p.id }); invited.add(p.id); invite.disabled = true; invite.textContent = "Invited"; };
+    li.append(invite);
+    return li;
+  }));
+  if (!others.length) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = s instanceof OnlineSession ? "No one else is here right now." : "Parties need the game server.";
+    nearby.append(li);
+  }
+}
+
+function openPartyPanel() {
+  if (phase !== "playing") return;
+  partyPanelOpen = true;
+  menu.hidden = true;
+  renderPartyPanel();
+  partyPanel.hidden = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function closePartyPanel(relock = true) {
+  partyPanelOpen = false;
+  partyPanel.hidden = true;
+  if (relock && phase === "playing") { input.lock(); canvas.focus(); }
+}
+
+input.on("KeyP", () => (partyPanelOpen ? closePartyPanel() : openPartyPanel()));
+input.on("KeyY", () => {
+  if (!(session instanceof OnlineSession)) return;
+  if (pendingInvite) { session.send("party:accept"); pendingInvite = null; }
+  else if (pendingReady) { session.send("party:ready"); hud.notice("You're ready."); pendingReady = null; }
+});
+input.on("KeyN", () => {
+  if (!(session instanceof OnlineSession) || !pendingInvite) return;
+  session.send("party:decline");
+  hud.notice(`You declined ${pendingInvite}'s invitation.`);
+  pendingInvite = null;
+});
+document.getElementById("party-close")!.addEventListener("click", () => closePartyPanel());
+document.getElementById("party-leave")!.addEventListener("click", () => {
+  if (session instanceof OnlineSession) session.send("party:leave");
+});
+document.getElementById("menu-party")!.addEventListener("click", () => openPartyPanel());
+document.getElementById("menu-dungeon")!.addEventListener("click", () => {
+  if (session instanceof OnlineSession && session.place === "colossus") session.send("dungeon:leave");
+  menu.hidden = true;
+});
 
 async function signOut() {
   await leaveWorld();
@@ -262,7 +454,8 @@ async function signOut() {
 // In-game menu: appears whenever the mouse is released (Esc).
 document.addEventListener("pointerlockchange", () => {
   if (phase !== "playing") return;
-  menu.hidden = input.locked;
+  menu.hidden = input.locked || partyPanelOpen;
+  (document.getElementById("menu-dungeon") as HTMLButtonElement).hidden = !(session instanceof OnlineSession && session.place === "colossus");
 });
 document.getElementById("menu-resume")!.addEventListener("click", () => { input.lock(); canvas.focus(); });
 document.getElementById("menu-characters")!.addEventListener("click", async () => {
@@ -299,6 +492,35 @@ function adaptResolution(now: number) {
   engine.setHardwareScalingLevel(scaling);
 }
 
+/** What pressing E would do right now, shown as a prompt. */
+function contextPrompt(s: Session, self: PlayerView, players: PlayerView[]): { key?: string; text: string } | null {
+  if (s.kind !== "online") return null;
+  if (self.downTime > 0) return { text: self.reviveProgress > 0 ? `Being revived… ${Math.round(self.reviveProgress * 100)}%` : "Down — hold on for a revive" };
+  // A downed player nearby.
+  const downed = players.find((p) => !p.isSelf && p.downTime > 0 && Math.hypot(p.x - self.x, p.y - self.y, p.z - self.z) <= COLOSSUS.reviveRange);
+  if (downed) return { key: "Hold E", text: downed.reviveProgress > 0 ? `Reviving ${downed.name}… ${Math.round(downed.reviveProgress * 100)}%` : `Revive ${downed.name}` };
+  if (pendingInvite) return { key: "Y", text: `Join ${pendingInvite}'s party (N to decline)` };
+  if (pendingReady) return { key: "Y", text: `Ready to face the Drowned Colossus` };
+
+  if (s.place === "world") {
+    const atShrine = Math.hypot(self.x - SHRINE.x, self.z - SHRINE.z) < SHRINE.radius && Math.abs(self.y - SHRINE.y) < 4;
+    if (atShrine && !self.mantleAwakened) {
+      return { key: "E", text: `Awaken the ${MANTLES.find((m) => m.id === self.mantle)?.name ?? "your"} mantle` };
+    }
+    const g = COLOSSUS.gate;
+    if (Math.hypot(self.x - g.x, self.z - g.z) < g.radius && Math.abs(self.y - g.y) < 6) {
+      if (self.level < COLOSSUS.minLevel) return { text: `The Drowned Colossus — reach level ${COLOSSUS.minLevel} to enter` };
+      const leader = roster?.members.find((m) => m.leader);
+      if (roster && leader?.sessionId !== self.id) return { text: `Waiting for ${leader?.name ?? "your leader"} to lead the party in` };
+      return { key: "E", text: roster ? "Lead your party into the Drowned Colossus" : "Enter the Drowned Colossus (alone)" };
+    }
+  } else if (s.place === "colossus" && s.boss()?.phase === BossPhase.Cleared) {
+    const e = COLOSSUS.entry;
+    if (Math.hypot(self.x - e.x, self.z - e.z) < 12 && Math.abs(self.y - e.y) < 4) return { key: "E", text: "Return to the world" };
+  }
+  return null;
+}
+
 function frameWorld(now: number, dt: number) {
   const s = session!;
   s.frame(now, () => input.sample());
@@ -325,11 +547,21 @@ function frameWorld(now: number, dt: number) {
   for (const [id, rig] of enemyRigs) if (!seenEnemies.has(id)) { rig.dispose(); enemyRigs.delete(id); }
   effects.update(dt);
 
+  // Keep the open party panel current (people come and go, distances change).
+  if (partyPanelOpen && now - partyPanelRendered > 1000) renderPartyPanel();
+
+  const boss = s.boss();
+  if (boss && !colossusRig) colossusRig = new ColossusRig(scene);
+  colossusRig?.update(boss!, enemies, dt);
+  hud.updateBoss(boss);
+
   const self = s.self();
   if (self) {
     const speed = Math.hypot(self.vx, self.vy, self.vz);
     follow.update(self.x, self.y, self.z, input.yaw, input.pitch, input.zoom, speed, dt);
     hud.update(self, s.kind === "online");
+    hud.setPrompt(contextPrompt(s, self, players));
+    hud.updateParty(roster, players, self.id);
   }
   hud.setStatus(s.status());
   hud.updateLabels(players, project);
@@ -339,7 +571,7 @@ function frameWorld(now: number, dt: number) {
   if (hud.debugVisible && self) {
     hud.setDebug(
       `fps ${engine.getFps().toFixed(0)}  scale ${scaling.toFixed(2)}  quality ${qualityName}\n` +
-      `meshes ${scene.getActiveMeshes().length}  players ${players.length}\n` +
+      `meshes ${scene.getActiveMeshes().length}  players ${players.length}  dressed areas ${dressing.loadedAreas}\n` +
       `pos ${self.x.toFixed(1)}, ${self.y.toFixed(1)}, ${self.z.toFixed(1)}`,
     );
   }
@@ -357,6 +589,7 @@ function framePreview(now: number, dt: number) {
     vx: flying ? Math.sin(facing) * 9 : 0, vy: 0, vz: flying ? Math.cos(facing) * 9 : 0,
     facing, mode: flying ? Mode.Flight : Mode.Ground, stamina: 100, exhausted: 0,
     mantle: "", attackTime: 0, attackCombo: 0, downTime: 0, hp: 1, maxHp: 1, level: 1, xp: 0, mantleAwakened: false, abilityCooldown: 0,
+    party: "", reviveProgress: 0,
   };
   p.rig.update(view, dt, world);
   // Camera in front of the character, shifted so it sits right of the creation panel.
@@ -381,7 +614,8 @@ engine.runRenderLoop(() => {
     follow.update(world.spawn.x + 60, 30, world.spawn.z, t * 0.05 + 2.2, -0.25, 60, 0, dt);
   }
 
-  env.update(follow.camera.position, (now - startTime) / 1000);
+  env.update(follow.camera.position, (now - startTime) / 1000, worldMesh);
+  dressing.update(follow.camera.position);
   adaptResolution(now);
   scene.render();
 });
@@ -393,6 +627,24 @@ if (params.has("test")) {
     self: () => session?.self(),
     enemies: () => session?.enemies(),
     look: (yaw: number, pitch: number) => { input.yaw = yaw; input.pitch = pitch; },
+    send: (type: string, payload?: unknown) => (session as OnlineSession | null)?.send?.(type, payload),
+    boss: () => session?.boss() ?? null,
+    place: () => session?.place ?? null,
+    roster: () => roster,
+    players: () => session?.players() ?? [],
+    template: (model: string) => {
+      const m = scene.getMeshByName(model);
+      if (!m) return null;
+      const b = m.getBoundingInfo().boundingBox;
+      return { min: b.minimum.asArray().map((v) => +v.toFixed(2)), max: b.maximum.asArray().map((v) => +v.toFixed(2)), pos: m.position.asArray(), rot: m.rotationQuaternion?.asArray() ?? m.rotation.asArray(), scale: m.scaling.asArray(), parent: m.parent?.name ?? null };
+    },
+    hide: (prefix: string) => { for (const m of scene.meshes) if (m.name.startsWith(prefix)) m.setEnabled(false); },
+    active: () => scene.getActiveMeshes().data.slice(0, scene.getActiveMeshes().length).map((m) => m.name),
+    /** Dressing meshes: name, enabled, instance count, world bounds (for checking the environment). */
+    dressing: () => scene.meshes.filter((m) => m.name.includes(":")).map((m) => {
+      const b = m.getBoundingInfo().boundingBox;
+      return { name: m.name, enabled: m.isEnabled(), count: (m as unknown as { thinInstanceCount: number }).thinInstanceCount, min: b.minimumWorld.asArray().map(Math.round), max: b.maximumWorld.asArray().map(Math.round) };
+    }),
   };
 }
 

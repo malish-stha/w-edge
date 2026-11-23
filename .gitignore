@@ -7,3 +7,4 @@ dist/
 *.log
 shots/
 data/
+.asset-cache/

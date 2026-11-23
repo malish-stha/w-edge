@@ -17,6 +17,13 @@
         <strong id="who">World's Edge</strong>
         <span id="status">Connecting…</span>
       </div>
+      <div id="party-frames"></div>
+      <div id="boss" hidden>
+        <div class="boss-name">The Drowned Colossus</div>
+        <div class="bar boss-hp"><div id="boss-hp"></div></div>
+        <div class="bar boss-armour"><div id="boss-armour"></div></div>
+        <div id="boss-objective"></div>
+      </div>
       <div id="debug" hidden></div>
       <div id="compass"></div>
       <div id="notices" aria-live="polite"></div>
@@ -54,7 +61,9 @@
           <dt>Q</dt><dd>Dodge</dd>
           <dt>Left mouse</dt><dd>Attack (hold to combo)</dd>
           <dt>1</dt><dd>Mantle skill</dd>
-          <dt>E</dt><dd>Interact (shrine)</dd>
+          <dt>E</dt><dd>Interact · hold to revive</dd>
+          <dt>P</dt><dd>Party</dd>
+          <dt>Y · N</dt><dd>Accept · decline</dd>
           <dt>Wheel</dt><dd>Camera distance</dd>
           <dt>Esc</dt><dd>Menu</dd>
           <dt>H · F3</dt><dd>Hide help · stats</dd>
@@ -67,11 +76,29 @@
         <h2>Menu</h2>
         <div class="stack">
           <button id="menu-resume" class="primary">Resume</button>
+          <button id="menu-party" class="secondary">Party</button>
+          <button id="menu-dungeon" class="secondary" hidden>Leave the dungeon</button>
           <button id="menu-characters" class="secondary">Change character</button>
           <button id="menu-signout" class="secondary">Sign out</button>
         </div>
       </div>
     </div>
+
+    <div id="party-panel" class="screen" hidden>
+      <div class="card">
+        <h2>Party</h2>
+        <ul id="party-members" class="characters"></ul>
+        <p id="party-empty" class="muted">You're not in a party. Invite players nearby (up to 4 in a party).</p>
+        <h2 class="sub">Nearby players</h2>
+        <ul id="party-nearby" class="characters"></ul>
+        <div class="actions">
+          <button id="party-leave" class="secondary">Leave party</button>
+          <button id="party-close" class="primary">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="fade" aria-hidden="true"></div>
 
     <div id="screen" class="screen">
       <div class="card"><h1>World's Edge</h1><p class="muted">Loading…</p></div>

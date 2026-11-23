@@ -126,6 +126,7 @@ export interface StoredCharacter extends CharacterSummary {
   accountId: number;
   xp: number;
   mantleAwakened: boolean;
+  questStep: number;
   position: { x: number; y: number; z: number } | null;
 }
 
@@ -161,10 +162,10 @@ function toCharacter(r: CharacterRow): StoredCharacter {
   };
 }
 
-export class NameTakenError extends Error {}
+export class NameTakenError extends Error { }
 
 export class Store {
-  constructor(private sql: Sql) {}
+  constructor(private sql: Sql) { }
 
   /** Find or create the account for an identity provider subject. Returns the account id. */
   async accountFor(provider: string, subject: string): Promise<number> {

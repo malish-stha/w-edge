@@ -1,8 +1,7 @@
 import {
   BossPhase, CLASS_MECHANICS, ENEMY_KINDS, ENEMY_SIZE, EnemyState, LEVEL_XP,
   MANTLE_EXPLORE, MANTLE_SKILLS, MANTLE_SKILLS_2, MANTLE_ULTIMATES,
-  MAX_LEVEL, Mode, ORIGIN_QUESTS, RIM_Z, SHRINE, STAMINA_MAX, UNLOCK_LEVELS,
-  levelProgress, techniqueDisplay,
+  MAX_LEVEL, Mode, RIM_Z, STAMINA_MAX, levelProgress, techniqueDisplay, type PingMessage,
 } from "@worlds-edge/shared";
 import type { BossView, EnemyView, PlayerView, Roster } from "./session.ts";
 
@@ -24,7 +23,6 @@ export class Hud {
   private root = $("hud");
   private who = $("who");
   private status = $("status");
-  private quest = $("quest");
   private mode = $("mode");
   private speed = $("speed");
   private altitude = $("altitude");
@@ -66,6 +64,9 @@ export class Hud {
   private labels = new Map<string, HTMLDivElement>();
   private enemyBars = new Map<string, HTMLDivElement>();
   private popups: Popup[] = [];
+  private lockReticle = $("lock-reticle");
+  private pingTags: Array<{ el: HTMLDivElement; ping: PingMessage; t: number; life: number }> = [];
+  private rallyTag: HTMLDivElement | null = null;
 
   show(title: string) {
     this.who.textContent = title;
@@ -77,9 +78,13 @@ export class Hud {
     for (const el of this.labels.values()) el.remove();
     for (const el of this.enemyBars.values()) el.remove();
     for (const p of this.popups) p.el.remove();
+    for (const p of this.pingTags) p.el.remove();
+    this.rallyTag?.remove(); this.rallyTag = null;
+    this.lockReticle.hidden = true;
     this.labels.clear();
     this.enemyBars.clear();
     this.popups = [];
+    this.pingTags = [];
     this.notices.replaceChildren();
   }
 
@@ -131,11 +136,7 @@ export class Hud {
     const s1 = MANTLE_SKILLS[self.mantle];
     setSlot(this.ability, this.abilityName, this.abilityState, this.abilityCd, s1?.name ?? "Mantle 1", self.abilityCooldown, s1?.cooldown ?? 8);
     const s2 = MANTLE_SKILLS_2[self.mantle];
-    const s2Locked = locked || self.level < UNLOCK_LEVELS.secondSkill;
-    this.ability2Name.textContent = s2?.name ?? "Mantle 2";
-    this.ability2.classList.toggle("locked", s2Locked);
-    this.ability2State.textContent = !online ? "Offline" : self.level < UNLOCK_LEVELS.secondSkill ? `Lv ${UNLOCK_LEVELS.secondSkill}` : locked ? "Dormant" : self.ability2Cooldown >= 0.05 ? `${self.ability2Cooldown.toFixed(1)} s` : "Ready";
-    this.ability2Cd.style.width = s2Locked || !s2 ? "0" : `${(1 - self.ability2Cooldown / s2.cooldown) * 100}%`;
+    setSlot(this.ability2, this.ability2Name, this.ability2State, this.ability2Cd, s2?.name ?? "Mantle 2", self.ability2Cooldown, s2?.cooldown ?? 7);
     const s3 = MANTLE_EXPLORE[self.mantle];
     setSlot(this.ability3, this.ability3Name, this.ability3State, this.ability3Cd, s3?.name ?? "Explore", self.exploreCooldown, s3?.cooldown ?? 6);
     const ult = MANTLE_ULTIMATES[self.mantle];
@@ -157,24 +158,7 @@ export class Hud {
     this.classState.textContent = cState;
     this.classCd.style.width = self.classCooldown > 0 ? `${Math.max(0, 1 - self.classCooldown / 2) * 100}%` : "100%";
     const { title } = techniqueDisplay(self.technique, self.classId, self.mantle);
-    this.techLabel.textContent = self.level < UNLOCK_LEVELS.technique ? `[K] Techs unlock Lv ${UNLOCK_LEVELS.technique}` : `[K] ${title}`;
-
-    // Origin quest tracker.
-    const q = ORIGIN_QUESTS[self.origin];
-    if (online && q) {
-      this.quest.hidden = false;
-      if (self.questStep === 0) {
-        const d = Math.round(Math.hypot(self.x - q.target.x, self.z - q.target.z));
-        this.quest.textContent = `${q.title}: ${q.step0Text} (${d} m)`;
-      } else if (self.questStep === 1) {
-        const d = Math.round(Math.hypot(self.x - SHRINE.x, self.z - SHRINE.z));
-        this.quest.textContent = `${q.title}: ${q.step1Text} (${d} m)`;
-      } else {
-        this.quest.textContent = `Charm: ${q.reward}`;
-      }
-    } else {
-      this.quest.hidden = true;
-    }
+    this.techLabel.textContent = `[K] ${title}`;
   }
 
   /** The context prompt near the middle of the screen (key + text), or null to hide it. */
@@ -252,12 +236,13 @@ export class Hud {
     });
   }
 
-  /** Health and guard bars over nearby enemies that are hurt, staggered or fighting. */
-  updateEnemyBars(enemies: EnemyView[], camX: number, camY: number, camZ: number, project: Project) {
+  /** Health and guard bars over nearby enemies that are hurt, staggered, fighting, or marked. */
+  updateEnemyBars(enemies: EnemyView[], camX: number, camY: number, camZ: number, project: Project, markedId: string | null = null) {
     const seen = new Set<string>();
     for (const e of enemies) {
-      const near = Math.hypot(e.x - camX, e.y - camY, e.z - camZ) < 45;
-      const engaged = e.hp < e.maxHp || e.guard < e.maxGuard || (e.state !== EnemyState.Idle && e.kind !== "dummy");
+      const marked = e.id === markedId;
+      const near = Math.hypot(e.x - camX, e.y - camY, e.z - camZ) < (marked ? 90 : 45);
+      const engaged = marked || e.hp < e.maxHp || e.guard < e.maxGuard || (e.state !== EnemyState.Idle && e.kind !== "dummy");
       if (!near || !engaged || e.state === EnemyState.Dead) continue;
       const s = project(e.x, e.y + ENEMY_SIZE[e.kind].height + 0.6, e.z);
       if (!s) continue;
@@ -272,7 +257,8 @@ export class Hud {
       }
       const staggered = e.state === EnemyState.Stagger;
       const exposed = e.state === EnemyState.Exposed;
-      el.querySelector("small")!.textContent = `${ENEMY_KINDS[e.kind]?.name ?? e.kind}${staggered ? " · staggered" : exposed ? " · back exposed" : ""}`;
+      el.classList.toggle("marked", marked);
+      el.querySelector("small")!.textContent = `${marked ? "★ " : ""}${ENEMY_KINDS[e.kind]?.name ?? e.kind}${staggered ? " · staggered" : exposed ? " · back exposed" : ""}`;
       (el.querySelector(".ehp > div") as HTMLDivElement).style.width = `${(e.hp / e.maxHp) * 100}%`;
       (el.querySelector(".eguard > div") as HTMLDivElement).style.width = `${(staggered ? 1 : e.guard / e.maxGuard) * 100}%`;
       el.classList.toggle("staggered", staggered);
@@ -280,6 +266,60 @@ export class Hud {
       el.style.top = `${s.y}px`;
     }
     for (const [id, el] of this.enemyBars) if (!seen.has(id)) { el.remove(); this.enemyBars.delete(id); }
+  }
+
+  updateLock(target: EnemyView | null, project: Project) {
+    if (!target || target.state === EnemyState.Dead) { this.lockReticle.hidden = true; return; }
+    const s = project(target.x, target.y + (ENEMY_SIZE[target.kind]?.height ?? 1.5) * 0.5, target.z);
+    if (!s) { this.lockReticle.hidden = true; return; }
+    this.lockReticle.hidden = false;
+    this.lockReticle.style.left = `${s.x}px`;
+    this.lockReticle.style.top = `${s.y}px`;
+  }
+
+  addPing(ping: PingMessage) {
+    const label: Record<PingMessage["kind"], string> = {
+      ping: `◆ ${ping.from}`,
+      weak: `◆ WEAK POINT (${ping.from})`,
+      revive: `✚ REVIVE (${ping.from})`,
+      target: `★ FOCUS (${ping.from})`,
+      rally: `⚑ RALLY (${ping.from})`,
+    };
+    const el = document.createElement("div");
+    el.className = `ping-tag ${ping.kind}`;
+    el.textContent = label[ping.kind] ?? ping.from;
+    this.labelLayer.appendChild(el);
+    this.pingTags.push({ el, ping, t: 0, life: 4.0 });
+  }
+
+  updatePings(dt: number, rally: { x: number; y: number; z: number } | null, self: PlayerView | undefined, project: Project) {
+    this.pingTags = this.pingTags.filter((item) => {
+      item.t += dt;
+      if (item.t >= item.life) { item.el.remove(); return false; }
+      const s = project(item.ping.x, item.ping.y + 1.8, item.ping.z);
+      if (!s) { item.el.style.display = "none"; return true; }
+      item.el.style.display = "";
+      item.el.style.left = `${s.x}px`;
+      item.el.style.top = `${s.y}px`;
+      item.el.style.opacity = String(1 - Math.max(0, item.t - 3.0));
+      return true;
+    });
+    if (!rally) {
+      this.rallyTag?.remove(); this.rallyTag = null;
+      return;
+    }
+    const s = project(rally.x, rally.y + 3.0, rally.z);
+    if (!s) { if (this.rallyTag) this.rallyTag.style.display = "none"; return; }
+    if (!this.rallyTag) {
+      this.rallyTag = document.createElement("div");
+      this.rallyTag.className = "ping-tag rally";
+      this.labelLayer.appendChild(this.rallyTag);
+    }
+    const dist = self ? ` (${Math.round(Math.hypot(rally.x - self.x, rally.z - self.z))} m)` : "";
+    this.rallyTag.textContent = `⚑ RALLY${dist}`;
+    this.rallyTag.style.display = "";
+    this.rallyTag.style.left = `${s.x}px`;
+    this.rallyTag.style.top = `${s.y}px`;
   }
 
   /** Name tags above other players. */

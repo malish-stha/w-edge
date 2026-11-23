@@ -53,10 +53,20 @@ export function lookKey(l: CharacterLook) {
   return `${l.classId}|${l.origin}|${l.skin}|${l.hair}|${l.outfit}`;
 }
 
+export interface SwingEvent {
+  classId: string;
+  combo: number;
+  x: number; y: number; z: number;
+  facing: number;
+  mantle: string;
+  charged: boolean;
+}
+
 /**
- * A low-poly character built from boxes. The class shows in the weapon (sword,
- * bow, shield or spear) and the origin in accessories, so classes read from
- * behind at a distance. Distinct take-off, hover, flight, dive and landing poses.
+ * Low-poly character with articulated weapons: Saber slashes with torso twist
+ * & glowing edge, Archer draws bowstring & nocks an arrow in-hand, Lancer
+ * thrusts the spear forward & projects a dive cone, Vanguard guards with an
+ * angled shield & energy barrier.
  */
 export class CharacterRig {
   readonly root: TransformNode;
@@ -71,10 +81,27 @@ export class CharacterRig {
   private nodes: TransformNode[] = [];
   private facing = 0;
   private pitch = 0;
+  private bodyYaw = 0;
   private walkPhase = 0;
   private time = 0;
-
+  private lastAttackTime = 0;
+  private lastCombo = 0;
   private classId: string;
+
+  // Class weapon rigs
+  private sword?: TransformNode;
+  private swordGlow?: Mesh;
+  private spear?: TransformNode;
+  private lanceCone?: Mesh;
+  private bow?: TransformNode;
+  private bowLimbU?: Mesh;
+  private bowLimbL?: Mesh;
+  private bowStringU?: Mesh;
+  private bowStringL?: Mesh;
+  private nockedArrow?: TransformNode;
+  private shield?: TransformNode;
+  private shieldBarrier?: Mesh;
+  private shieldChargeGlow?: Mesh;
 
   constructor(scene: Scene, look: CharacterLook) {
     this.key = lookKey(look);
@@ -87,7 +114,6 @@ export class CharacterRig {
     const capeMat = mat(scene, Color3.FromHexString(look.outfit).scale(0.7).toHexString(), { twoSided: true });
 
     this.root = new TransformNode("player", scene);
-    // Body pivots around the chest so flight poses tilt naturally.
     this.body = new TransformNode("body", scene);
     this.body.parent = this.root;
     this.body.position.y = 1.0;
@@ -135,45 +161,74 @@ export class CharacterRig {
     // --- Weapon by class --------------------------------------------------------------
     switch (look.classId) {
       case "saber": {
-        // Sword held upright beside the shoulder so it shows in the silhouette from behind.
         const sword = node("sword", this.armR, 0, -0.62, 0.05);
-        sword.rotation.x = -0.3;
-        box("blade", sword, 0.06, 1.1, 0.14, 0, 0.68, 0, metal);
-        box("guard", sword, 0.3, 0.05, 0.09, 0, 0.1, 0, mat(scene, "#c9a227"));
-        box("hilt", sword, 0.05, 0.2, 0.05, 0, -0.02, 0, dark);
+        sword.rotation.x = 0.25;
+        box("blade", sword, 0.06, 1.15, 0.14, 0, 0.7, 0, metal);
+        this.swordGlow = box("bladeGlow", sword, 0.1, 1.2, 0.19, 0, 0.72, 0, mat(scene, "#ffd36b", { glow: 1, alpha: 0.55 }));
+        this.swordGlow.setEnabled(false);
+        box("guard", sword, 0.32, 0.05, 0.09, 0, 0.1, 0, mat(scene, "#c9a227"));
+        box("hilt", sword, 0.05, 0.22, 0.05, 0, -0.02, 0, dark);
+        this.sword = sword;
         break;
       }
       case "archer": {
-        // Bow slung diagonally across the back, with a quiver.
-        const bow = node("bow", this.body, 0, 0.12, -0.25);
-        bow.rotation.z = 0.7;
-        box("grip", bow, 0.07, 0.3, 0.07, 0, 0, 0, wood);
-        const upper = box("limbU", bow, 0.06, 0.62, 0.06, -0.08, 0.42, 0, wood); upper.rotation.z = 0.3;
-        const lower = box("limbL", bow, 0.06, 0.62, 0.06, -0.08, -0.42, 0, wood); lower.rotation.z = -0.3;
-        box("string", bow, 0.015, 1.3, 0.015, -0.2, 0, 0, mat(scene, "#eeeeee"));
+        // Bow held in left hand; limbs flex & two-segment bowstring pulls back with a nocked arrow.
+        const bow = node("bow", this.armL, 0.04, -0.62, 0.06);
+        box("grip", bow, 0.06, 0.28, 0.07, 0, 0, 0, wood);
+        this.bowLimbU = box("limbU", bow, 0.05, 0.62, 0.055, 0, 0.4, -0.06, wood);
+        this.bowLimbU.rotation.x = -0.28;
+        this.bowLimbL = box("limbL", bow, 0.05, 0.62, 0.055, 0, -0.4, -0.06, wood);
+        this.bowLimbL.rotation.x = 0.28;
+
+        const strMat = mat(scene, "#f4f4f4", { glow: 0.35 });
+        this.bowStringU = box("stringU", bow, 0.015, 0.65, 0.015, 0, 0.32, -0.17, strMat);
+        this.bowStringL = box("stringL", bow, 0.015, 0.65, 0.015, 0, -0.32, -0.17, strMat);
+
+        // Nocked 3D arrow (shaft + broadhead + fletching) visible during draw.
+        const arrow = node("nockedArrow", bow, 0, 0, 0.05);
+        box("arrowShaft", arrow, 0.025, 0.025, 0.85, 0, 0, 0.25, wood);
+        const head = part(CreateCylinder("arrowHead", { height: 0.14, diameterTop: 0, diameterBottom: 0.07, tessellation: 4 }, scene), arrow, 0, 0, 0.72, mat(scene, "#ffd36b", { glow: 0.7 }));
+        head.rotation.x = Math.PI / 2;
+        box("arrowFletch", arrow, 0.08, 0.08, 0.12, 0, 0, -0.15, mat(scene, "#ff6b57", { glow: 0.3 }));
+        arrow.setEnabled(false);
+        this.nockedArrow = arrow;
+        this.bow = bow;
+
         box("quiver", this.body, 0.16, 0.55, 0.16, 0.2, 0.15, -0.3, mat(scene, "#6b4a32"));
         box("fletch", this.body, 0.14, 0.12, 0.14, 0.2, 0.47, -0.3, mat(scene, "#f2f4f8"));
         break;
       }
       case "vanguard": {
-        // Kite shield on the left arm, short sword in the right.
         const shield = node("shield", this.armL, -0.14, -0.38, 0.04);
-        box("plate", shield, 0.07, 0.8, 0.6, 0, 0, 0, cloth);
-        box("rim", shield, 0.08, 0.86, 0.12, 0, 0, 0.27, metal);
-        box("rim2", shield, 0.08, 0.86, 0.12, 0, 0, -0.27, metal);
-        box("boss", shield, 0.1, 0.2, 0.2, -0.04, 0.05, 0, metal);
+        box("plate", shield, 0.07, 0.86, 0.64, 0, 0, 0, cloth);
+        box("rim", shield, 0.08, 0.9, 0.12, 0, 0, 0.29, metal);
+        box("rim2", shield, 0.08, 0.9, 0.12, 0, 0, -0.29, metal);
+        box("boss", shield, 0.1, 0.22, 0.22, -0.04, 0.05, 0, metal);
+        this.shieldBarrier = box("barrier", shield, 0.05, 1.5, 1.8, -0.22, 0.05, 0, mat(scene, "#7fe8ff", { alpha: 0.32, glow: 0.85, twoSided: true }));
+        this.shieldBarrier.setEnabled(false);
+        this.shieldChargeGlow = box("chargeGlow", shield, 0.12, 0.95, 0.7, -0.05, 0, 0, mat(scene, "#ffd36b", { alpha: 0.45, glow: 1 }));
+        this.shieldChargeGlow.setEnabled(false);
+        this.shield = shield;
+
         const sword = node("shortSword", this.armR, 0, -0.62, 0.05);
         sword.rotation.x = 1.9;
-        box("blade", sword, 0.05, 0.6, 0.1, 0, 0.42, 0, metal);
-        box("guard", sword, 0.22, 0.05, 0.08, 0, 0.1, 0, dark);
+        box("blade", sword, 0.05, 0.65, 0.1, 0, 0.44, 0, metal);
+        box("guard", sword, 0.24, 0.05, 0.08, 0, 0.1, 0, dark);
+        this.sword = sword;
         break;
       }
       default: {
-        // Lancer: spear held upright like a staff; it leads head-first in a dive.
+        // Lancer: spear held beside shoulder; thrusts dead-ahead on attack and gets wind-cone in dive/pierce.
         const spear = node("spear", this.armR, 0, -0.62, 0.08);
-        spear.rotation.x = 0.12;
-        part(CreateCylinder("shaft", { height: 2.4, diameter: 0.06, tessellation: 6 }, scene), spear, 0, 0.3, 0, wood);
-        part(CreateCylinder("tip", { height: 0.4, diameterTop: 0, diameterBottom: 0.16, tessellation: 4 }, scene), spear, 0, 1.7, 0, metal);
+        spear.rotation.x = 0.14;
+        part(CreateCylinder("shaft", { height: 2.5, diameter: 0.06, tessellation: 6 }, scene), spear, 0, 0.35, 0, wood);
+        part(CreateCylinder("tip", { height: 0.45, diameterTop: 0, diameterBottom: 0.17, tessellation: 4 }, scene), spear, 0, 1.8, 0, metal);
+        this.lanceCone = part(
+          CreateCylinder("lanceCone", { height: 1.5, diameterTop: 0.02, diameterBottom: 0.9, tessellation: 12 }, scene),
+          spear, 0, 1.35, 0, mat(scene, "#9fe4ff", { alpha: 0.35, glow: 0.9, twoSided: true }),
+        );
+        this.lanceCone.setEnabled(false);
+        this.spear = spear;
       }
     }
 
@@ -203,7 +258,6 @@ export class CharacterRig {
         break;
       }
       default: {
-        // Harbourfolk: a layered scarf with a tail that streams behind.
         const scarf = mat(scene, "#d9c27a");
         box("scarf", this.body, 0.52, 0.13, 0.42, 0, 0.47, 0, scarf);
         const tail = part(CreatePlane("scarfTail", { width: 0.14, height: 0.6 }, scene), this.body, -0.14, 0.2, -0.22, mat(scene, "#d9c27a", { twoSided: true }));
@@ -213,7 +267,7 @@ export class CharacterRig {
     }
 
     this.cape = part(CreatePlane("cape", { width: 0.6, height: 1.0 }, scene), this.body, 0, -0.05, -0.2, capeMat);
-    this.cape.setPivotPoint(new Vector3(0, 0.5, 0)); // swing from the shoulders
+    this.cape.setPivotPoint(new Vector3(0, 0.5, 0));
 
     this.shadow = CreateDisc("shadow", { radius: 0.5, tessellation: 12 }, scene);
     this.shadow.rotation.x = Math.PI / 2;
@@ -221,7 +275,7 @@ export class CharacterRig {
     this.shadow.isPickable = false;
   }
 
-  update(p: PlayerView, dt: number, world: World) {
+  update(p: PlayerView, dt: number, world: World, onSwing?: (ev: SwingEvent) => void) {
     this.time += dt;
     const hSpeed = Math.hypot(p.vx, p.vz);
     const speed = Math.hypot(p.vx, p.vy, p.vz);
@@ -233,8 +287,21 @@ export class CharacterRig {
     this.facing += shortestAngle(this.facing, p.facing) * (1 - Math.exp(-12 * dt));
     this.root.rotation.y = this.facing;
 
-    // Target pose per movement state.
-    let bodyPitch = 0, legSwing = 0, legBack = 0, armSwing = 0, armOut = 0, armForward = 0, capeLift = 0.1, bob = 0;
+    // Detect newly started attack swing for crisp weapon-arc VFX.
+    if (p.attackTime > 0 && (this.lastAttackTime <= 0 || p.attackTime > this.lastAttackTime + 0.05 || p.attackCombo !== this.lastCombo)) {
+      onSwing?.({
+        classId: this.classId,
+        combo: p.attackCombo || 1,
+        x: p.x, y: p.y + 1.15 * sc, z: p.z,
+        facing: p.facing,
+        mantle: p.mantle,
+        charged: p.classCharge > 0 || p.giant,
+      });
+    }
+    this.lastAttackTime = p.attackTime;
+    this.lastCombo = p.attackCombo;
+
+    let bodyPitch = 0, bodyYaw = 0, legSwing = 0, legBack = 0, armSwing = 0, armOut = 0, armForward = 0, capeLift = 0.1, bob = 0;
     switch (p.mode) {
       case Mode.Ground: {
         this.walkPhase += hSpeed * dt * 1.6;
@@ -250,7 +317,6 @@ export class CharacterRig {
         legBack = 0.3; armOut = 0.6; capeLift = 0.5;
         break;
       case Mode.Flight: {
-        // Upright hover when slow, stretched out when fast.
         const k = Math.min(1, hSpeed / 15);
         bodyPitch = k * 1.15 + Math.min(0.35, Math.max(0, (hSpeed - 15) / 50));
         legBack = 0.15 + k * 0.25;
@@ -262,47 +328,138 @@ export class CharacterRig {
         break;
       }
       case Mode.Dive: {
-        // Head-first along the velocity, spear leading.
         const down = Math.atan2(-p.vy, Math.max(0.01, hSpeed));
         bodyPitch = Math.PI / 2 + down * 0.9;
         legBack = 0.1;
-        armForward = 0; // arms tucked; a Lancer's upright spear now points along the dive
         capeLift = 1.4;
         break;
       }
     }
+
     let armLX = armSwing - armForward * 0.5, armRX = -armSwing - armForward;
     let armLZ = -armOut, armRZ = armOut;
-    let armRate = 10;
+    let armRate = 12;
     let bodyY = 1.0 + bob;
 
-    // Attack swing, by weapon. `a` runs 0→1 over the active window.
+    // Weapon pose defaults
+    let swordRotX = this.classId === "vanguard" ? 1.9 : 0.25;
+    let swordRotZ = 0;
+    let spearRotX = 0.14;
+    let spearY = -0.62;
+    let bowRotX = 0;
+    let bowRotZ = 0.15;
+    let bowPull = 0;
+    let showArrow = false;
+    let shieldRotY = 0;
+
     if (p.attackTime > 0 && p.downTime <= 0) {
-      const a = 1 - p.attackTime / 0.22;
-      armRate = 28;
+      const a = Math.max(0, Math.min(1, 1 - p.attackTime / 0.22));
+      armRate = 32;
       switch (this.classId) {
-        case "lancer": armRX = -Math.PI / 2 - 0.2; armRZ = 0.1; break; // thrust: spear levels forward
         case "saber": {
-          const flip = p.attackCombo === 2 ? -1 : 1; // second hit swings back the other way
-          armRX = -2.4 + a * 1.9; armRZ = flip * (0.9 - a * 1.5);
+          if (p.attackCombo === 3) {
+            // Heavy overhead cleave
+            bodyYaw = -0.25 + a * 0.4;
+            armRX = -2.85 + a * 2.4;
+            armLX = -2.2 + a * 1.8;
+            armRZ = 0.2;
+            swordRotX = 0.3 + a * 1.35;
+          } else {
+            // Alternating horizontal/diagonal sword cuts
+            const dir = p.attackCombo === 2 ? -1 : 1;
+            bodyYaw = dir * (0.45 - a * 0.95);
+            armRX = -1.65 + a * 0.4;
+            armRZ = dir * (1.05 - a * 2.1);
+            swordRotX = 1.35;
+            swordRotZ = dir * 0.45;
+          }
           break;
         }
-        case "vanguard": armLX = -1.5; armLZ = 0.3; break; // shield bash
-        case "archer": armRX = -1.55; armLX = -1.45; armLZ = 0.35; break; // draw and loose
+        case "lancer": {
+          if (p.attackCombo === 3) {
+            // Wide sweeping polearm finish
+            bodyYaw = 0.65 - a * 1.3;
+            armRX = -1.5;
+            armRZ = 0.95 - a * 2.1;
+            spearRotX = Math.PI * 0.96;
+            spearY = -0.8;
+          } else {
+            // Crisp two-step forward spear thrust along +Z
+            const plunge = Math.sin(a * Math.PI);
+            bodyYaw = -0.35 + plunge * 0.55;
+            armRX = -Math.PI / 2;
+            armRZ = 0.08;
+            armLX = 0.35;
+            spearRotX = Math.PI * 0.98;
+            spearY = -0.62 - plunge * 0.72;
+          }
+          break;
+        }
+        case "archer": {
+          // Side-on archery stance: left arm holds bow forward, right hand nocks & draws string back then looses.
+          bodyYaw = -0.55;
+          armLX = -Math.PI / 2;
+          armLZ = 0.1;
+          bowRotX = Math.PI / 2;
+          bowRotZ = 0;
+          if (a < 0.55) {
+            bowPull = a / 0.55;
+            showArrow = true;
+            armRX = -1.52;
+            armRZ = -0.28 - bowPull * 0.22;
+          } else {
+            bowPull = Math.max(0, 1 - (a - 0.55) * 4);
+            showArrow = false;
+            armRX = -1.52;
+            armRZ = -0.52;
+          }
+          break;
+        }
+        case "vanguard": {
+          if (p.attackCombo === 2) {
+            // Shield bash forward
+            bodyYaw = -0.35 + a * 0.65;
+            armLX = -1.58;
+            armLZ = 0.45;
+            shieldRotY = 1.35;
+            armRX = 0.25;
+          } else {
+            // Short-sword slash (1 & 3)
+            const heavy = p.attackCombo === 3;
+            bodyYaw = 0.4 - a * 0.85;
+            armRX = -2.2 + a * 1.65;
+            armRZ = 0.75 - a * 1.4;
+            swordRotX = heavy ? 1.5 : 1.7;
+            armLX = -1.1;
+            shieldRotY = 0.6;
+          }
+          break;
+        }
       }
     } else if (p.guarding && p.downTime <= 0) {
-      if (this.classId === "vanguard") { armLX = -1.35; armLZ = 0.75; } // shield raised forward
-      else if (this.classId === "saber") { armRX = -1.4; armRZ = -0.6; } // parry stance
+      if (this.classId === "vanguard") {
+        armLX = -1.3; armLZ = 0.85; shieldRotY = 1.48; bodyYaw = -0.2;
+      } else if (this.classId === "saber") {
+        armRX = -1.35; armRZ = -0.75; swordRotX = 0.5; swordRotZ = 0.85; bodyYaw = 0.25;
+      }
+    } else if (this.classId === "archer" && p.classCooldown > 0.1 && p.downTime <= 0) {
+      bodyYaw = -0.45; armLX = -Math.PI / 2; armLZ = 0.1; bowRotX = Math.PI / 2; bowRotZ = 0;
+    } else if (this.classId === "archer" && p.mode === Mode.Ground && hSpeed < 2) {
+      // Relaxed bow-in-hand ready stance when standing
+      armLX = -0.35; armLZ = -0.15; bowRotX = 0.35;
     }
-    // Downed: lying on the ground.
+
     if (p.downTime > 0) {
       bodyPitch = -1.45; bodyY = 0.35;
       legSwing = 0; legBack = 0; armLX = -0.2; armRX = -0.2; armLZ = -1.2; armRZ = 1.2;
     }
 
+    // Apply body & limb transforms
     const r = 10;
     this.pitch = damp(this.pitch, bodyPitch, r, dt);
+    this.bodyYaw = damp(this.bodyYaw, bodyYaw, 18, dt);
     this.body.rotation.x = this.pitch;
+    this.body.rotation.y = this.bodyYaw;
     this.body.position.y = damp(this.body.position.y, bodyY, 12, dt);
     this.legL.rotation.x = damp(this.legL.rotation.x, legSwing + legBack, r, dt);
     this.legR.rotation.x = damp(this.legR.rotation.x, -legSwing + legBack, r, dt);
@@ -310,6 +467,47 @@ export class CharacterRig {
     this.armR.rotation.x = damp(this.armR.rotation.x, armRX, armRate, dt);
     this.armL.rotation.z = damp(this.armL.rotation.z, armLZ, armRate, dt);
     this.armR.rotation.z = damp(this.armR.rotation.z, armRZ, armRate, dt);
+
+    // Apply weapon articulation
+    if (this.sword) {
+      this.sword.rotation.x = damp(this.sword.rotation.x, swordRotX, armRate, dt);
+      this.sword.rotation.z = damp(this.sword.rotation.z, swordRotZ, armRate, dt);
+      if (this.swordGlow) this.swordGlow.setEnabled(p.classCharge > 0 || p.guarding || (p.attackTime > 0 && p.downTime <= 0));
+    }
+    if (this.spear) {
+      this.spear.rotation.x = damp(this.spear.rotation.x, spearRotX, armRate, dt);
+      this.spear.position.y = damp(this.spear.position.y, spearY, armRate, dt);
+      if (this.lanceCone) {
+        const fast = (p.mode === Mode.Dive || (p.mode === Mode.Flight && speed >= 22)) && p.downTime <= 0;
+        this.lanceCone.setEnabled(fast || (p.attackTime > 0 && p.attackCombo !== 3));
+      }
+    }
+    if (this.bow) {
+      this.bow.rotation.x = damp(this.bow.rotation.x, bowRotX, armRate, dt);
+      this.bow.rotation.z = damp(this.bow.rotation.z, bowRotZ, armRate, dt);
+      if (this.bowLimbU && this.bowLimbL) {
+        this.bowLimbU.rotation.x = -0.28 - bowPull * 0.22;
+        this.bowLimbL.rotation.x = 0.28 + bowPull * 0.22;
+      }
+      if (this.bowStringU && this.bowStringL) {
+        const pullZ = -0.17 - bowPull * 0.36;
+        const tilt = bowPull * 0.56;
+        this.bowStringU.position.z = ( -0.17 + pullZ ) * 0.5;
+        this.bowStringU.rotation.x = -tilt;
+        this.bowStringL.position.z = ( -0.17 + pullZ ) * 0.5;
+        this.bowStringL.rotation.x = tilt;
+      }
+      if (this.nockedArrow) {
+        this.nockedArrow.setEnabled(showArrow);
+        this.nockedArrow.position.z = 0.05 - bowPull * 0.36;
+      }
+    }
+    if (this.shield) {
+      this.shield.rotation.y = damp(this.shield.rotation.y, shieldRotY, armRate, dt);
+      this.shieldBarrier?.setEnabled(p.guarding && p.downTime <= 0);
+      this.shieldChargeGlow?.setEnabled(p.classCharge > 0 && p.downTime <= 0);
+    }
+
     const flutter = Math.sin(this.time * (6 + speed * 0.3)) * 0.06 * Math.min(1, speed / 10);
     this.cape.rotation.x = damp(this.cape.rotation.x, capeLift + flutter, 8, dt);
     for (const [i, s] of this.streamers.entries()) {
@@ -317,7 +515,6 @@ export class CharacterRig {
       s.rotation.x = damp(s.rotation.x, capeLift * 1.2 + wave, 8, dt);
     }
 
-    // Blob shadow on whatever is below.
     const ground = groundHeightAt(world, p.x, p.z, p.y + 0.1);
     if (Number.isFinite(ground) && p.y - ground < 40) {
       const h = p.y - ground;

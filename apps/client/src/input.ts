@@ -24,6 +24,8 @@ export class Input {
   private mouseDown = false;
   private secondaryDown = false;
   private listeners = new Map<string, Array<() => void>>();
+  /** Timestamp (ms) of the last manual mouse look, so soft lock-on yields to player aim. */
+  lastLookAt = 0;
 
   /** Treat input as captured even without pointer lock (automated tests). */
   forceActive = false;
@@ -46,23 +48,25 @@ export class Input {
       this.keys.add(e.code);
       this.emit(e.code);
       // Keep the page from scrolling or the browser from acting on game keys.
-        if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "KeyR", "KeyK", "Digit1", "Digit2", "Digit3", "Digit4", "ShiftLeft"].includes(e.code)) {
-          e.preventDefault();
-        }
-      });
-    window.addEventListener("keyup", (e) => this.keys.delete(e.code));
+      if (this.locked && ["Space", "ControlLeft", "KeyW", "KeyS", "KeyA", "KeyD", "KeyQ", "KeyC", "KeyE", "KeyF", "KeyR", "KeyK", "KeyG", "KeyV", "Tab", "Digit1", "Digit2", "Digit3", "Digit4", "ShiftLeft"].includes(e.code)) {
+        e.preventDefault();
+      }
+    });
+    window.addEventListener("keyup", (e) => { this.keys.delete(e.code); this.emit(`${e.code}:up`); });
     window.addEventListener("blur", () => { this.keys.clear(); this.mouseDown = false; this.secondaryDown = false; });
 
     canvas.addEventListener("click", () => this.lock());
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-    // Left button attacks (holding it keeps the combo going); right button runs class mechanic / guard.
+    // Left button attacks (holding it keeps the combo going); right button runs class mechanic / guard; middle pings.
     canvas.addEventListener("mousedown", (e) => {
       if (document.pointerLockElement !== this.canvas) return;
       if (e.button === 0) { this.attackQueued = true; this.mouseDown = true; }
+      else if (e.button === 1) { e.preventDefault(); this.emit("MiddleMouse"); }
       else if (e.button === 2) { this.secondaryQueued = true; this.secondaryDown = true; }
     });
     window.addEventListener("mouseup", (e) => {
       if (e.button === 0) this.mouseDown = false;
+      else if (e.button === 1) this.emit("MiddleMouse:up");
       else if (e.button === 2) this.secondaryDown = false;
     });
     document.addEventListener("mousemove", (e) => {
@@ -70,6 +74,7 @@ export class Input {
       const sensitivity = 0.0022;
       this.yaw += e.movementX * sensitivity;
       this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch - e.movementY * sensitivity));
+      if (Math.abs(e.movementX) + Math.abs(e.movementY) > 1) this.lastLookAt = performance.now();
     });
     canvas.addEventListener("wheel", (e) => {
       this.zoom = Math.max(3, Math.min(24, this.zoom * (e.deltaY > 0 ? 1.1 : 0.9)));

@@ -3,7 +3,7 @@ import type { CharacterLook } from "./render/character.ts";
 import {
   PLAYER_MAX_HP, ROOM_WORLD, STEP_SECONDS,
   createMoveState, defaultMantlePathFor, defaultTechniqueFor, getColossusArena, getWorld, stepMovement,
-  type Fx, type MoveInput, type MoveState, type World,
+  type Fx, type MoveInput, type MoveState, type PingMessage, type World,
 } from "@worlds-edge/shared";
 
 /** Everything the renderer and HUD need about one player this frame. */
@@ -67,7 +67,18 @@ export interface BossView {
 
 export interface Roster {
   partyId: string;
+  rally: { x: number; y: number; z: number } | null;
+  targetId: string | null;
   members: Array<{ id: number; name: string; leader: boolean; roomId: string | null; sessionId: string | null }>;
+}
+
+export interface OnlinePlayerInfo {
+  id: number;
+  name: string;
+  roomId: string;
+  roomName: string;
+  level: number;
+  inParty: boolean;
 }
 
 export type Place = "solo" | "world" | "colossus";
@@ -81,6 +92,8 @@ export interface SessionEvents {
   onReadyCheck?: (leader: string, seconds: number) => void;
   onTransfer?: (roomId: string, kind: "world" | "colossus") => void;
   onCleared?: (time: string, xp: number) => void;
+  onPing?: (ping: PingMessage) => void;
+  onOnlinePlayers?: (list: OnlinePlayerInfo[]) => void;
 }
 
 export interface Session extends SessionEvents {
@@ -158,7 +171,7 @@ export class OfflineSession implements Session {
   enemies() { return []; }
   boss() { return null; }
   status() { return `Solo · ${this.reason}`; }
-  dispose() {}
+  dispose() { }
 }
 
 /** Thrown when the server says this character belongs in a live dungeon. */
@@ -186,6 +199,8 @@ export class OnlineSession implements Session {
   onReadyCheck?: SessionEvents["onReadyCheck"];
   onTransfer?: SessionEvents["onTransfer"];
   onCleared?: SessionEvents["onCleared"];
+  onPing?: SessionEvents["onPing"];
+  onOnlinePlayers?: SessionEvents["onOnlinePlayers"];
   /** Called once if the connection is lost for good, with our last predicted state. */
   onDisconnect?: (last: MoveState, reason: string) => void;
   /** Party roster messages that arrived before the app attached its handler. */
@@ -211,6 +226,8 @@ export class OnlineSession implements Session {
     room.onMessage("ready-check", (m: { leader: string; seconds: number }) => this.onReadyCheck?.(m.leader, m.seconds));
     room.onMessage("transfer", (m: { roomId: string; kind: "world" | "colossus" }) => this.onTransfer?.(m.roomId, m.kind));
     room.onMessage("cleared", (m: { time: string; xp: number }) => this.onCleared?.(m.time, m.xp));
+    room.onMessage("ping", (m: PingMessage) => this.onPing?.(m));
+    room.onMessage("party:online", (list: OnlinePlayerInfo[]) => this.onOnlinePlayers?.(list));
     // The SDK retries dropped connections itself; onLeave means the room is gone for good.
     room.onDrop(() => { this.reconnecting = true; });
     room.onReconnect(() => { this.reconnecting = false; });
@@ -337,6 +354,6 @@ export class OnlineSession implements Session {
   /** Leave the room; resolves once the server has saved and released the character. */
   async dispose() {
     this.room.onLeave.clear();
-    await this.room.leave().catch(() => {});
+    await this.room.leave().catch(() => { });
   }
 }

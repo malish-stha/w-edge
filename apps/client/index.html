@@ -1,41 +1,57 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>World's Edge</title>
-    <meta name="description" content="Fly from First Harbour across the ocean to the edge of the world." />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23153049'/%3E%3Cpath d='M4 18h24v3H4z' fill='%237fd8ff'/%3E%3Cpath d='M16 5l4 9h-8z' fill='%23ffd36b'/%3E%3Cpath d='M6 21h20v6H6z' fill='%23e3f4ff' opacity='.6'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/src/style.css" />
-  </head>
-  <body>
-    <canvas id="game" tabindex="0"></canvas>
-    <div id="labels"></div>
 
-    <div id="hud" hidden>
-      <div class="status-card">
-        <strong id="who">World's Edge</strong>
-        <span id="status">Connecting…</span>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World's Edge</title>
+  <meta name="description" content="Fly from First Harbour across the ocean to the edge of the world." />
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23153049'/%3E%3Cpath d='M4 18h24v3H4z' fill='%237fd8ff'/%3E%3Cpath d='M16 5l4 9h-8z' fill='%23ffd36b'/%3E%3Cpath d='M6 21h20v6H6z' fill='%23e3f4ff' opacity='.6'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+
+<body>
+  <canvas id="game" tabindex="0"></canvas>
+  <div id="labels"></div>
+
+  <div id="hud" hidden>
+    <div class="status-card">
+      <strong id="who">World's Edge</strong>
+      <span id="status">Connecting…</span>
+    </div>
+    <div id="party-frames"></div>
+    <div id="boss" hidden>
+      <div class="boss-name">The Drowned Colossus</div>
+      <div class="bar boss-hp">
+        <div id="boss-hp"></div>
         <span id="quest" class="quest-line" hidden></span>
       </div>
-      <div id="party-frames"></div>
-      <div id="boss" hidden>
-        <div class="boss-name">The Drowned Colossus</div>
-        <div class="bar boss-hp"><div id="boss-hp"></div></div>
-        <div class="bar boss-armour"><div id="boss-armour"></div></div>
-        <div id="boss-objective"></div>
+      <div class="bar boss-armour">
+        <div id="boss-armour"></div>
       </div>
-      <div id="debug" hidden></div>
-      <div id="compass"></div>
-      <div id="notices" aria-live="polite"></div>
-      <div id="crosshair" aria-hidden="true"></div>
-      <div id="prompt" hidden></div>
-      <div id="downed" hidden>Down — recovering at your last safe spot…</div>
-      <div id="vignette" aria-hidden="true"></div>
-      <div class="vitals">
-        <div class="vital-row"><span>HP</span><div class="bar hp"><div id="hp-fill"></div></div><span id="hp-text">100</span></div>
-        <div class="vital-row"><span id="level">Lv 1</span><div class="bar xp"><div id="xp-fill"></div></div><span id="xp-text">0 XP</span></div>
+      <div id="boss-objective"></div>
+    </div>
+    <div id="debug" hidden></div>
+    <div id="compass"></div>
+    <div id="notices" aria-live="polite"></div>
+    <div id="crosshair" aria-hidden="true"></div>
+    <div id="lock-reticle" hidden aria-hidden="true"></div>
+    <div id="prompt" hidden></div>
+    <div id="downed" hidden>Down — recovering at your last safe spot…</div>
+    <div id="vignette" aria-hidden="true"></div>
+    <div class="vitals">
+      <div class="vital-row"><span>HP</span>
+        <div class="bar hp">
+          <div id="hp-fill"></div>
+        </div><span id="hp-text">100</span>
       </div>
+      <div class="vital-row"><span id="level">Lv 1</span>
+        <div class="bar xp">
+          <div id="xp-fill"></div>
+        </div><span id="xp-text">0 XP</span>
+      </div>
+    </div>
       <div id="hotbar" class="hotbar">
         <div id="class-skill" class="ability class-skill">
           <kbd id="class-key">RMB</kbd>
@@ -82,20 +98,38 @@
       <div id="help" class="help">
         <strong>Controls</strong>
         <dl>
-          <dt>WASD + mouse</dt><dd>Move and look</dd>
-          <dt>Space</dt><dd>Jump · Space again in midair to fly · hold to climb</dd>
-          <dt>Ctrl or C</dt><dd>Descend · land</dd>
-          <dt>Shift</dt><dd>Run · boost · look down to dive</dd>
-          <dt>Q</dt><dd>Dodge</dd>
-          <dt>Left mouse</dt><dd>Attack (hold to combo)</dd>
-          <dt>Right mouse</dt><dd>Class mechanic · guard / parry / plant arrow</dd>
-          <dt>1–4 · K</dt><dd>Mantle skills, explore &amp; ultimate · Build &amp; paths</dd>
-          <dt>E</dt><dd>Interact · hold to revive</dd>
-          <dt>P</dt><dd>Party</dd>
-          <dt>Y · N</dt><dd>Accept · decline</dd>
-          <dt>Wheel</dt><dd>Camera distance</dd>
-          <dt>Esc</dt><dd>Menu</dd>
-          <dt>H · F3</dt><dd>Hide help · stats</dd>
+          <dt>WASD + mouse</dt>
+          <dd>Move and look</dd>
+          <dt>Space</dt>
+          <dd>Jump · Space again in midair to fly · hold to climb</dd>
+          <dt>Ctrl or C</dt>
+          <dd>Descend · land</dd>
+          <dt>Shift</dt>
+          <dd>Run · boost · look down to dive</dd>
+          <dt>Q</dt>
+          <dd>Dodge</dd>
+          <dt>Left mouse</dt>
+          <dd>Attack (hold to combo)</dd>
+          <dt>Right mouse</dt>
+          <dd>Class mechanic · guard / parry / plant arrow</dd>
+          <dt>Tab · V</dt>
+          <dd>Soft lock-on (cycle / release)</dd>
+          <dt>Middle mouse · G</dt>
+          <dd>Ping · hold to set rally (leader)</dd>
+          <dt>1–4 · K</dt>
+          <dd>Mantle skills, explore &amp; ultimate · Build &amp; paths</dd>
+          <dt>E</dt>
+          <dd>Interact · hold to revive</dd>
+          <dt>P</dt>
+          <dd>Party</dd>
+          <dt>Y · N</dt>
+          <dd>Accept · decline</dd>
+          <dt>Wheel</dt>
+          <dd>Camera distance</dd>
+          <dt>Esc</dt>
+          <dd>Menu</dd>
+          <dt>H · F3</dt>
+          <dd>Hide help · stats</dd>
         </dl>
       </div>
     </div>
@@ -118,8 +152,17 @@
       <div class="card">
         <h2>Party</h2>
         <ul id="party-members" class="characters"></ul>
-        <p id="party-empty" class="muted">You're not in a party. Invite players nearby (up to 4 in a party).</p>
-        <h2 class="sub">Nearby players</h2>
+        <p id="party-empty" class="muted">You're not in a party. Invite players nearby or in other world copies (up to 4).</p>
+        <div id="party-leader-tools" class="actions" hidden>
+          <button id="party-rally" class="secondary">Set rally here</button>
+          <button id="party-clear-rally" class="secondary">Clear rally</button>
+        </div>
+        <button id="party-join-leader" class="primary" hidden>Join leader's world</button>
+        <form id="party-invite-form" class="row">
+          <input id="party-invite-name" placeholder="Invite by character name" maxlength="16" />
+          <button type="submit" class="secondary">Invite</button>
+        </form>
+        <h2 class="sub">Nearby &amp; online players</h2>
         <ul id="party-nearby" class="characters"></ul>
         <div class="actions">
           <button id="party-leave" class="secondary">Leave party</button>
@@ -145,9 +188,13 @@
     <div id="fade" aria-hidden="true"></div>
 
     <div id="screen" class="screen">
-      <div class="card"><h1>World's Edge</h1><p class="muted">Loading…</p></div>
+      <div class="card">
+        <h1>World's Edge</h1>
+        <p class="muted">Loading…</p>
+      </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
-  </body>
+</body>
+
 </html>

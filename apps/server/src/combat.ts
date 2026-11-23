@@ -32,7 +32,7 @@ export class Combat {
   private tempestUntil = new Map<string, number>();
   private giantUntil = new Map<string, number>();
 
-  constructor(private host: Host, private enemies: Enemies) {}
+  constructor(private host: Host, private enemies: Enemies) { }
 
   forget(sid: string) {
     this.pierceReady.delete(sid);
@@ -581,8 +581,7 @@ export class Combat {
       const dist = Math.min(wall, 24);
       const tx = origin.x + dir.x * dist, ty = origin.y + dir.y * dist, tz = origin.z + dir.z * dist;
       const radius = path === "catapult" ? 7.0 : 4.5;
-      this.host.fx({ t: "shot", from: [r1(origin.x), r1(origin.y), r1(origin.z)], to: [r1(tx), r1(ty), r1(tz)] });
-      this.host.fx({ t: "ring", x: r1(tx), y: r1(ty), z: r1(tz), r: radius, kind: "titan" });
+      this.host.fx({ t: "boulder", from: [r1(origin.x), r1(origin.y), r1(origin.z)], to: [r1(tx), r1(ty), r1(tz)], r: radius });
       for (const [id] of this.enemies.near(tx, ty, tz, radius)) {
         this.hitWithRelay(id, sid, p.x, p.z, 26, 45, { heavy: true });
       }

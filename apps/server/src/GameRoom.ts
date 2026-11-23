@@ -1,8 +1,8 @@
 import { Room, ServerError, type AuthContext, type Client } from "colyseus";
 import {
-  Buttons, COLOSSUS, DOWN_SECONDS, HP_REGEN, HP_REGEN_DELAY, Mode, PATCH_RATE, PLAYER_MAX_HP, TICK_RATE, UNLOCK_LEVELS,
+  Buttons, COLOSSUS, DOWN_SECONDS, HP_REGEN, HP_REGEN_DELAY, MAX_LEVEL, Mode, PATCH_RATE, PLAYER_MAX_HP, TICK_RATE, UNLOCK_LEVELS,
   createMoveState, createStepEvents, defaultMantlePathFor, defaultTechniqueFor, levelForXp, pathsForMantle, stepMovement, techniquesForClass,
-  type Fx, type World,
+  type Fx, type PingKind, type PingMessage, type World,
 } from "@worlds-edge/shared";
 import { authConfig, verifySession } from "./auth.ts";
 import { Combat } from "./combat.ts";
@@ -56,11 +56,11 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
   }
 
   /** Room-specific join rules (throw a ServerError to refuse). */
-  protected checkJoin(_character: StoredCharacter) {}
+  protected checkJoin(_character: StoredCharacter) { }
   /** E pressed (not held). */
-  protected onInteract(_sid: string, _p: Player) {}
+  protected onInteract(_sid: string, _p: Player) { }
   /** Per-tick encounter logic. */
-  protected tick(_dt: number) {}
+  protected tick(_dt: number) { }
   /** Where a character's position is saved from. */
   protected savedPosition(p: Player) { return { x: p.safeX, y: p.safeY, z: p.safeZ }; }
   /** Where a joining character appears. */
@@ -91,9 +91,8 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
           if (ev.ability1 && !this.combat.ability(sid, player) && !player.mantleAwakened) {
             this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
           }
-          if (ev.ability2 && !this.combat.ability2(sid, player, input.yaw, input.pitch)) {
-            if (!player.mantleAwakened) this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
-            else if (player.level < UNLOCK_LEVELS.secondSkill) this.notify(sid, `Reach level ${UNLOCK_LEVELS.secondSkill} to unlock your second mantle skill.`);
+          if (ev.ability2 && !this.combat.ability2(sid, player, input.yaw, input.pitch) && !player.mantleAwakened) {
+            this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
           }
           if (ev.ability3 && !this.combat.explore(sid, player, input.yaw) && !player.mantleAwakened) {
             this.notify(sid, "Your mantle is still dormant. Awaken it at the training-yard shrine (E).");
@@ -167,13 +166,17 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     p.xp = xp;
     p.level = levelForXp(p.xp);
     if (p.level > before) {
+      const m = this.meta.get(sid);
+      if (m) Parties.updateLevel(m.characterId, p.level);
       this.fx({ t: "level", id: sid, level: p.level });
       const unlocks: string[] = [];
       if (before < UNLOCK_LEVELS.boostDive && p.level >= UNLOCK_LEVELS.boostDive) unlocks.push("Boost & Dive (Shift)");
       if (before < UNLOCK_LEVELS.technique && p.level >= UNLOCK_LEVELS.technique) unlocks.push("Signature Techniques (K)");
       if (before < UNLOCK_LEVELS.secondSkill && p.level >= UNLOCK_LEVELS.secondSkill) unlocks.push("Second Mantle Skill (2)");
       if (before < UNLOCK_LEVELS.upgradePath && p.level >= UNLOCK_LEVELS.upgradePath) unlocks.push("Mantle Upgrade Paths (K) & Drowned Colossus gate");
-      this.notify(sid, unlocks.length ? `Level ${p.level}! Unlocked: ${unlocks.join(", ")}.` : `Level ${p.level}!`);
+      this.notify(sid, unlocks.length
+        ? `Level ${p.level}${p.level >= MAX_LEVEL ? " (max)" : ""}! Unlocked: ${unlocks.join(", ")}.`
+        : `Level ${p.level}!`);
       void this.save(sid);
     }
   }
@@ -219,16 +222,25 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
   // --- Parties --------------------------------------------------------------------------
 
   private registerPartyMessages() {
+    Parties.registerRoom(this.roomId, (sid, type, payload) => this.clientOf(sid)?.send(type, payload));
     this.unsubscribeParty = Parties.subscribe((affected) => this.refreshParty(affected));
 
-    this.onMessage("party:invite", (client, msg: { sessionId?: string }) => {
+    this.onMessage("party:invite", (client, msg: { sessionId?: string; characterId?: number; name?: string }) => {
       const from = this.meta.get(client.sessionId);
-      const to = msg?.sessionId ? this.meta.get(msg.sessionId) : undefined;
-      if (!from || !to || !msg.sessionId) { this.notify(client.sessionId, "That player isn't here any more."); return; }
-      const error = Parties.invite(from.characterId, to.characterId);
+      if (!from) return;
+      let toId: number | null = null;
+      if (typeof msg?.characterId === "number") toId = msg.characterId;
+      else if (msg?.sessionId) toId = this.meta.get(msg.sessionId)?.characterId ?? null;
+      else if (typeof msg?.name === "string") toId = Parties.findByName(msg.name);
+      if (!toId) { this.notify(client.sessionId, "That player isn't online right now."); return; }
+      const error = Parties.invite(from.characterId, toId);
       if (error) { this.notify(client.sessionId, error); return; }
-      this.clientOf(msg.sessionId)?.send("party:invite", { from: Parties.nameOf(from.characterId) });
-      this.notify(client.sessionId, `Invitation sent to ${Parties.nameOf(to.characterId)}.`);
+      Parties.sendTo(toId, "party:invite", { from: Parties.nameOf(from.characterId) });
+      this.notify(client.sessionId, `Invitation sent to ${Parties.nameOf(toId)}.`);
+    });
+    this.onMessage("party:online", (client) => {
+      const me = this.meta.get(client.sessionId);
+      if (me) client.send("party:online", Parties.onlinePlayers(me.characterId));
     });
     this.onMessage("party:accept", (client) => {
       const me = this.meta.get(client.sessionId);
@@ -236,8 +248,7 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
       const error = Parties.accept(me.characterId);
       if (error) { this.notify(client.sessionId, error); return; }
       for (const id of Parties.members(me.characterId)) {
-        const sid = this.sessionOfCharacter(id);
-        if (sid) this.notify(sid, id === me.characterId ? "You joined the party." : `${Parties.nameOf(me.characterId)} joined the party.`);
+        Parties.sendTo(id, "notice", id === me.characterId ? "You joined the party." : `${Parties.nameOf(me.characterId)} joined the party.`);
       }
     });
     this.onMessage("party:decline", (client) => {
@@ -251,8 +262,85 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
       Parties.leave(me.characterId);
       this.notify(client.sessionId, "You left the party.");
       for (const id of others) {
-        const sid = this.sessionOfCharacter(id);
-        if (sid) this.notify(sid, `${Parties.nameOf(me.characterId)} left the party.`);
+        Parties.sendTo(id, "notice", `${Parties.nameOf(me.characterId)} left the party.`);
+      }
+    });
+    this.onMessage("party:promote", (client, msg: { characterId?: number }) => {
+      const me = this.meta.get(client.sessionId);
+      if (!me || typeof msg?.characterId !== "number") return;
+      const error = Parties.promote(me.characterId, msg.characterId);
+      if (error) { this.notify(client.sessionId, error); return; }
+      const newName = Parties.nameOf(msg.characterId);
+      for (const id of Parties.members(me.characterId)) {
+        Parties.sendTo(id, "notice", `${newName} is now the party leader.`);
+      }
+    });
+    this.onMessage("party:join-leader", (client) => {
+      const me = this.meta.get(client.sessionId);
+      if (!me || this.roomName !== "world") return;
+      const loc = Parties.leaderLocation(me.characterId);
+      if (!loc || loc.roomId === this.roomId || loc.roomName !== "world") {
+        this.notify(client.sessionId, "Your leader isn't in another world copy right now.");
+        return;
+      }
+      Parties.markTransfer([me.characterId]);
+      client.send("transfer", { roomId: loc.roomId, kind: "world" });
+    });
+    this.onMessage("party:rally", (client, msg: { x?: number; y?: number; z?: number; clear?: boolean }) => {
+      const me = this.meta.get(client.sessionId);
+      const p = this.state.players.get(client.sessionId);
+      if (!me || !p) return;
+      const rally = msg?.clear ? null : {
+        x: Math.round((Number.isFinite(msg?.x) ? msg.x! : p.x) * 10) / 10,
+        y: Math.round((Number.isFinite(msg?.y) ? msg.y! : p.y) * 10) / 10,
+        z: Math.round((Number.isFinite(msg?.z) ? msg.z! : p.z) * 10) / 10,
+      };
+      const error = Parties.setRally(me.characterId, rally);
+      if (error) { this.notify(client.sessionId, error); return; }
+      for (const id of Parties.members(me.characterId)) {
+        Parties.sendTo(id, "notice", rally ? `${p.name} set a rally point.` : `${p.name} cleared the rally point.`);
+      }
+    });
+    this.onMessage("party:target", (client, msg: { targetId?: string | null }) => {
+      const me = this.meta.get(client.sessionId);
+      const p = this.state.players.get(client.sessionId);
+      if (!me || !p) return;
+      const targetId = typeof msg?.targetId === "string" && msg.targetId ? msg.targetId : null;
+      const error = Parties.setTarget(me.characterId, targetId);
+      if (error) { this.notify(client.sessionId, error); return; }
+      const e = targetId ? this.state.enemies.get(targetId) : undefined;
+      if (e) {
+        const ping: PingMessage = { id: `t-${Date.now()}`, from: p.name, kind: "target", x: e.x, y: e.y, z: e.z, targetId: targetId! };
+        for (const id of Parties.members(me.characterId)) {
+          const msid = this.sessionOfCharacter(id);
+          if (msid) this.clientOf(msid)?.send("ping", ping);
+        }
+      }
+    });
+    this.onMessage("ping", (client, msg: { kind?: PingKind; x?: number; y?: number; z?: number; targetId?: string }) => {
+      const me = this.meta.get(client.sessionId);
+      const p = this.state.players.get(client.sessionId);
+      if (!me || !p || ![msg?.x, msg?.y, msg?.z].every(Number.isFinite)) return;
+      const kind: PingKind = msg.kind === "weak" || msg.kind === "revive" || msg.kind === "target" || msg.kind === "rally" ? msg.kind : "ping";
+      if (kind === "rally" && Parties.isLeader(me.characterId) && Parties.partyId(me.characterId)) {
+        Parties.setRally(me.characterId, { x: msg.x!, y: msg.y!, z: msg.z! });
+      }
+      if ((kind === "target" || kind === "weak") && msg.targetId && Parties.isLeader(me.characterId) && Parties.partyId(me.characterId)) {
+        Parties.setTarget(me.characterId, msg.targetId);
+      }
+      const ping: PingMessage = {
+        id: `${client.sessionId}-${Date.now()}`,
+        from: p.name,
+        kind,
+        x: Math.round(msg.x! * 10) / 10,
+        y: Math.round(msg.y! * 10) / 10,
+        z: Math.round(msg.z! * 10) / 10,
+        targetId: typeof msg.targetId === "string" ? msg.targetId : undefined,
+      };
+      const recipients = Parties.members(me.characterId);
+      for (const id of recipients) {
+        const msid = this.sessionOfCharacter(id);
+        if (msid) this.clientOf(msid)?.send("ping", ping);
       }
     });
   }
@@ -323,7 +411,7 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
   }
 
   /** Test accounts only: adjust the encounter (dungeon overrides). */
-  protected devBoss(_sid: string, _msg: { hp?: number }) {}
+  protected devBoss(_sid: string, _msg: { hp?: number }) { }
 
   // --- Joining, leaving, saving -------------------------------------------------------
 
@@ -363,7 +451,7 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
     player.away = 0;
     player.party = Parties.partyId(character.id);
     this.state.players.set(client.sessionId, player);
-    Parties.arrive(character.id, character.name, { roomId: this.roomId, sessionId: client.sessionId });
+    Parties.arrive(character.id, character.name, { roomId: this.roomId, sessionId: client.sessionId, roomName: this.roomName, level: player.level });
     this.refreshParty([character.id]);
     console.log(`[${this.roomName} ${this.roomId}] ${player.name} joined (${this.clients.length}/${this.maxClients})`);
   }
@@ -397,6 +485,7 @@ export abstract class GameRoom extends Room<{ state: WorldState; input: MoveInpu
   }
 
   async onDispose() {
+    Parties.unregisterRoom(this.roomId);
     this.unsubscribeParty?.();
     await this.saveAll();
   }

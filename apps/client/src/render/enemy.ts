@@ -60,6 +60,8 @@ export class EnemyRig {
   private animGroups: AnimationGroup[] = [];
   private currentAnim: AnimationGroup | null = null;
   private lastState: number = -1;
+  private modelId: string | undefined;
+  private modelStarted = false;
   private disposed = false;
   private facing = 0;
   private t = 0;
@@ -77,13 +79,13 @@ export class EnemyRig {
     };
 
     const modelId = ENEMY_KINDS[kind]?.model;
+    this.modelId = modelId;
     if (modelId) {
       if (kind === "hullbreaker") {
         // Weak point on its back that glows when exposed or staggered.
         this.parts.coreLit = box("coreLit", this.body, 0.75, 0.75, 0.25, 0, 1.5, -0.95, mat(scene, "#ffb347", { glow: 1 }));
         (this.parts.coreLit as Mesh).setEnabled(false);
       }
-      void this.attachModel(scene, modelId);
     } else if (kind === "anchor") {
       const iron = mat(scene, "#4a4f55"), rust = mat(scene, "#8a5a3a");
       box("base", this.body, 2.4, 0.6, 2.4, 0, 0.3, 0, iron);
@@ -158,15 +160,22 @@ export class EnemyRig {
     return n;
   }
 
-  update(e: EnemyView, dt: number) {
+  update(e: EnemyView, dt: number, camDist = 0) {
     this.t += dt;
     this.root.position.set(e.x, e.y - this.sink, e.z);
     this.facing += shortestAngle(this.facing, e.facing) * (1 - Math.exp(-10 * dt));
     this.root.rotation.y = this.facing;
 
+    if (this.modelId && !this.modelStarted && camDist < 170) {
+      this.modelStarted = true;
+      void this.attachModel(this.root.getScene(), this.modelId);
+    }
+
     const dead = e.state === EnemyState.Dead;
     this.sink = dead ? Math.min(3, this.sink + dt * 2) : 0;
-    this.root.setEnabled(!(dead && this.sink >= 3));
+    const far = this.modelId ? camDist > 240 : false;
+    this.root.setEnabled(!far && !(dead && this.sink >= 3));
+    if (far) return;
 
     if (this.animGroups.length && e.state !== this.lastState) {
       this.lastState = e.state;

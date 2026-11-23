@@ -4,9 +4,9 @@ import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import {
-  BossPhase, COLOSSUS, MANTLES, Mode, ORIGIN_QUESTS, SHRINE, UNLOCK_LEVELS,
-  defaultTechniqueFor, getWorld, pathsForMantle, randomDraft, techniqueDisplay, techniquesForClass,
-  type CharacterDraft, type CharacterSummary, type Fx, type World,
+  BossPhase, COLOSSUS, ENEMY_SIZE, EnemyState, MANTLES, Mode, ORIGIN_QUESTS, SHRINE, UNLOCK_LEVELS,
+  defaultTechniqueFor, getWorld, pathsForMantle, randomDraft, raycast, techniqueDisplay, techniquesForClass,
+  type CharacterDraft, type CharacterSummary, type Fx, type PingKind, type PingMessage, type World,
 } from "@worlds-edge/shared";
 import { ColossusRig } from "./render/colossus.ts";
 import { Dressing } from "./render/dressing.ts";
@@ -24,7 +24,7 @@ import { googleSignOut, renderGoogleButton } from "./google.ts";
 import { Menus, describe } from "./menus.ts";
 import {
   DungeonRedirect, OfflineSession, OnlineSession,
-  type Place, type PlayerView, type Roster, type Session,
+  type EnemyView, type OnlinePlayerInfo, type Place, type PlayerView, type Roster, type Session,
 } from "./session.ts";
 
 // --- Settings ----------------------------------------------------------------
@@ -126,6 +126,9 @@ let pendingInvite: string | null = null;
 let pendingReady: string | null = null;
 let partyPanelOpen = false;
 let techPanelOpen = false;
+let lockedEnemyId: string | null = null;
+let onlinePlayersList: OnlinePlayerInfo[] = [];
+let pingDownAt = 0;
 
 function clearRigs() {
   for (const rig of rigs.values()) rig.dispose();
@@ -177,6 +180,7 @@ function handleFx(list: Fx[]) {
         if (p) hud.popup(p.x, p.y + 2.2, p.z, "VAULT!", "xp");
         break;
       }
+      case "boulder": effects.boulder(f.from, f.to, f.r); break;
     }
   }
 }
@@ -293,7 +297,19 @@ async function playSolo() {
 function attach(s: Session) {
   s.onFx = handleFx;
   s.onNotice = (text) => hud.notice(text);
-  s.onParty = (r) => { roster = r; if (partyPanelOpen) renderPartyPanel(); };
+  s.onParty = (r) => {
+    roster = r;
+    effects.setRally(r?.rally ?? null);
+    if (partyPanelOpen) renderPartyPanel();
+  };
+  s.onPing = (ping: PingMessage) => {
+    effects.ping(ping.x, ping.y, ping.z, ping.kind);
+    hud.addPing(ping);
+  };
+  s.onOnlinePlayers = (list) => {
+    onlinePlayersList = list;
+    if (partyPanelOpen) renderPartyPanel();
+  };
   s.onInvite = (from) => {
     pendingInvite = from;
     hud.notice(`${from} invites you to their party. Press Y to join or N to decline.`);
@@ -368,6 +384,8 @@ async function leaveWorld() {
   const s = session;
   session = null;
   roster = null;
+  lockedEnemyId = null;
+  onlinePlayersList = [];
   pendingInvite = null;
   pendingReady = null;
   clearRigs();
@@ -389,21 +407,37 @@ function renderPartyPanel() {
   const members = document.getElementById("party-members")!;
   const nearby = document.getElementById("party-nearby")!;
   const selfId = s instanceof OnlineSession ? s.sessionId : "";
+  const isLeader = !!roster?.members.find((m) => m.sessionId === selfId)?.leader;
+  const leaderMember = roster?.members.find((m) => m.leader);
+  const myRoomId = s instanceof OnlineSession ? s.roomId : null;
+
   members.replaceChildren(...(roster?.members ?? []).map((m) => {
     const li = document.createElement("li");
     li.className = "character";
-    li.innerHTML = `<span class="who"><strong class="${m.leader ? "leader" : ""}"></strong><small>${m.sessionId === selfId ? "You" : m.roomId ? "Online" : "Away"}</small></span>`;
+    const where = m.sessionId === selfId ? "You" : m.roomId === myRoomId ? "Same world" : m.roomId ? "Other world" : "Away";
+    li.innerHTML = `<span class="who"><strong class="${m.leader ? "leader" : ""}"></strong><small>${where}</small></span>`;
     li.querySelector("strong")!.textContent = m.name;
+    if (isLeader && m.sessionId !== selfId) {
+      const promote = document.createElement("button");
+      promote.className = "secondary";
+      promote.textContent = "Promote";
+      promote.onclick = () => (session as OnlineSession).send("party:promote", { characterId: m.id });
+      li.append(promote);
+    }
     return li;
   }));
   document.getElementById("party-empty")!.hidden = !!roster;
   (document.getElementById("party-leave") as HTMLButtonElement).hidden = !roster;
+  (document.getElementById("party-leader-tools") as HTMLDivElement).hidden = !(roster && isLeader);
+  const joinLeaderBtn = document.getElementById("party-join-leader") as HTMLButtonElement;
+  joinLeaderBtn.hidden = !(roster && !isLeader && s instanceof OnlineSession && s.place === "world" && leaderMember?.roomId && leaderMember.roomId !== s.roomId);
 
+  const inPartyNames = new Set((roster?.members ?? []).map((m) => m.name));
   const inParty = new Set((roster?.members ?? []).map((m) => m.sessionId));
   const others = (s?.players() ?? []).filter((p) => !p.isSelf && !inParty.has(p.id));
   const me = s?.self();
   others.sort((a, b) => (me ? Math.hypot(a.x - me.x, a.z - me.z) - Math.hypot(b.x - me.x, b.z - me.z) : 0));
-  nearby.replaceChildren(...others.slice(0, 12).map((p) => {
+  const rows: HTMLLIElement[] = others.slice(0, 12).map((p) => {
     const li = document.createElement("li");
     li.className = "character";
     const dist = me ? Math.round(Math.hypot(p.x - me.x, p.z - me.z)) : 0;
@@ -416,11 +450,28 @@ function renderPartyPanel() {
     invite.onclick = () => { (session as OnlineSession).send("party:invite", { sessionId: p.id }); invited.add(p.id); invite.disabled = true; invite.textContent = "Invited"; };
     li.append(invite);
     return li;
-  }));
-  if (!others.length) {
+  });
+  const localNames = new Set(others.map((p) => p.name));
+  for (const op of onlinePlayersList) {
+    if (localNames.has(op.name) || inPartyNames.has(op.name) || op.inParty) continue;
+    const li = document.createElement("li");
+    li.className = "character";
+    li.innerHTML = `<span class="who"><strong></strong><small>Level ${op.level} · other world copy</small></span>`;
+    li.querySelector("strong")!.textContent = op.name;
+    const invite = document.createElement("button");
+    invite.className = "secondary";
+    const key = `char:${op.id}`;
+    invite.textContent = invited.has(key) ? "Invited" : "Invite";
+    invite.disabled = invited.has(key);
+    invite.onclick = () => { (session as OnlineSession).send("party:invite", { characterId: op.id }); invited.add(key); invite.disabled = true; invite.textContent = "Invited"; };
+    li.append(invite);
+    rows.push(li);
+  }
+  nearby.replaceChildren(...rows);
+  if (!rows.length) {
     const li = document.createElement("li");
     li.className = "muted";
-    li.textContent = s instanceof OnlineSession ? "No one else is here right now." : "Parties need the game server.";
+    li.textContent = s instanceof OnlineSession ? "No other players online right now." : "Parties need the game server.";
     nearby.append(li);
   }
 }
@@ -508,10 +559,93 @@ function openPartyPanel() {
   techPanelOpen = false;
   techPanel.hidden = true;
   menu.hidden = true;
+  if (session instanceof OnlineSession) session.send("party:online");
   renderPartyPanel();
   partyPanel.hidden = false;
   if (document.pointerLockElement) document.exitPointerLock();
 }
+
+function toggleLockOn(cycle = false) {
+  const s = session;
+  const self = s?.self();
+  if (!s || !self) return;
+  if (lockedEnemyId && !cycle) { lockedEnemyId = null; return; }
+  const enemies = s.enemies().filter((e) => e.state !== EnemyState.Dead && Math.hypot(e.x - self.x, e.y - self.y, e.z - self.z) <= 45);
+  const cp = Math.cos(input.pitch);
+  const fx = Math.sin(input.yaw) * cp, fy = Math.sin(input.pitch), fz = Math.cos(input.yaw) * cp;
+  const visible = enemies.filter((e) => {
+    const h = ENEMY_SIZE[e.kind]?.height ?? 1.5;
+    const r = ENEMY_SIZE[e.kind]?.radius ?? 1;
+    const dx = e.x - self.x, dy = e.y + h * 0.5 - (self.y + 1.2), dz = e.z - self.z;
+    const d = Math.hypot(dx, dy, dz) || 1;
+    if ((dx * fx + dy * fy + dz * fz) / d < 0.35) return false;
+    return raycast(world, { x: self.x, y: self.y + 1.2, z: self.z }, { x: dx / d, y: dy / d, z: dz / d }, d) >= d - r - 0.5;
+  }).sort((a, b) => Math.hypot(a.x - self.x, a.z - self.z) - Math.hypot(b.x - self.x, b.z - self.z));
+  if (!visible.length) { lockedEnemyId = null; return; }
+  const idx = lockedEnemyId ? visible.findIndex((e) => e.id === lockedEnemyId) : -1;
+  lockedEnemyId = visible[(idx + 1) % visible.length].id;
+}
+
+function sendContextPing(isHold: boolean) {
+  if (!(session instanceof OnlineSession)) return;
+  const self = session.self();
+  if (!self) return;
+  if (isHold) {
+    session.send("ping", { kind: "rally" as PingKind, x: self.x, y: self.y, z: self.z });
+    return;
+  }
+  const cp = Math.cos(input.pitch);
+  const dir = { x: Math.sin(input.yaw) * cp, y: Math.sin(input.pitch), z: Math.cos(input.yaw) * cp };
+  const ox = self.x, oy = self.y + 1.3, oz = self.z;
+  // Check downed ally near aim.
+  const downed = session.players().find((p) => {
+    if (p.isSelf || p.downTime <= 0) return false;
+    const dx = p.x - ox, dy = p.y + 0.6 - oy, dz = p.z - oz;
+    const along = dx * dir.x + dy * dir.y + dz * dir.z;
+    return along > 0 && along < 45 && Math.hypot(dx - dir.x * along, dy - dir.y * along, dz - dir.z * along) < 2.2;
+  });
+  if (downed) { session.send("ping", { kind: "revive", x: downed.x, y: downed.y, z: downed.z }); return; }
+  // Check enemy near aim or locked target.
+  const aimed = (lockedEnemyId ? session.enemies().find((e) => e.id === lockedEnemyId) : undefined) ?? session.enemies().find((e) => {
+    if (e.state === EnemyState.Dead) return false;
+    const size = ENEMY_SIZE[e.kind] ?? { radius: 1, height: 1.5 };
+    const dx = e.x - ox, dy = e.y + size.height * 0.5 - oy, dz = e.z - oz;
+    const along = dx * dir.x + dy * dir.y + dz * dir.z;
+    return along > 0 && along < 50 && Math.hypot(dx - dir.x * along, dy - dir.y * along, dz - dir.z * along) < size.radius + 1.2;
+  });
+  if (aimed) {
+    const kind: PingKind = aimed.state === EnemyState.Exposed || aimed.state === EnemyState.Stagger ? "weak" : "target";
+    session.send("ping", { kind, x: aimed.x, y: aimed.y + (ENEMY_SIZE[aimed.kind]?.height ?? 1.5), z: aimed.z, targetId: aimed.id });
+    return;
+  }
+  const hit = Math.min(45, raycast(world, { x: ox, y: oy, z: oz }, dir, 45));
+  session.send("ping", { kind: "ping", x: ox + dir.x * hit, y: oy + dir.y * hit, z: oz + dir.z * hit });
+}
+
+input.on("Tab", () => toggleLockOn(true));
+input.on("KeyV", () => toggleLockOn(false));
+input.on("MiddleMouse", () => { pingDownAt = performance.now(); });
+input.on("MiddleMouse:up", () => { if (pingDownAt) { sendContextPing(performance.now() - pingDownAt >= 350); pingDownAt = 0; } });
+input.on("KeyG", () => { pingDownAt = performance.now(); });
+input.on("KeyG:up", () => { if (pingDownAt) { sendContextPing(performance.now() - pingDownAt >= 350); pingDownAt = 0; } });
+document.getElementById("party-rally")!.addEventListener("click", () => {
+  if (session instanceof OnlineSession) session.send("party:rally", {});
+});
+document.getElementById("party-clear-rally")!.addEventListener("click", () => {
+  if (session instanceof OnlineSession) session.send("party:rally", { clear: true });
+});
+document.getElementById("party-join-leader")!.addEventListener("click", () => {
+  if (session instanceof OnlineSession) { session.send("party:join-leader"); closePartyPanel(false); }
+});
+document.getElementById("party-invite-form")!.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const inp = document.getElementById("party-invite-name") as HTMLInputElement;
+  const name = inp.value.trim();
+  if (name && session instanceof OnlineSession) {
+    session.send("party:invite", { name });
+    inp.value = "";
+  }
+});
 
 function closePartyPanel(relock = true) {
   partyPanelOpen = false;
@@ -633,18 +767,19 @@ function frameWorld(now: number, dt: number) {
     let rig = rigs.get(p.id);
     if (rig && rig.key !== lookKey(p)) { rig.dispose(); rig = undefined; }
     if (!rig) { rig = new CharacterRig(scene, p); rigs.set(p.id, rig); }
-    rig.update(p, dt, world);
+    rig.update(p, dt, world, (ev) => effects.swing(ev));
   }
   for (const [id, rig] of rigs) if (!seen.has(id)) { rig.dispose(); rigs.delete(id); }
   for (const p of players) playerPos.set(p.id, { x: p.x, y: p.y, z: p.z });
 
   const enemies = s.enemies();
   const seenEnemies = new Set<string>();
+  const cam = follow.camera.position;
   for (const e of enemies) {
     seenEnemies.add(e.id);
     let rig = enemyRigs.get(e.id);
     if (!rig) { rig = new EnemyRig(scene, e.kind); enemyRigs.set(e.id, rig); }
-    rig.update(e, dt);
+    rig.update(e, dt, Math.hypot(e.x - cam.x, e.z - cam.z));
   }
   for (const [id, rig] of enemyRigs) if (!seenEnemies.has(id)) { rig.dispose(); enemyRigs.delete(id); }
   effects.update(dt);
@@ -658,7 +793,34 @@ function frameWorld(now: number, dt: number) {
   hud.updateBoss(boss);
 
   const self = s.self();
+  let lockedEnemy: EnemyView | null = null;
   if (self) {
+    if (lockedEnemyId) {
+      const cand = enemies.find((e) => e.id === lockedEnemyId && e.state !== EnemyState.Dead) ?? null;
+      if (cand) {
+        const size = ENEMY_SIZE[cand.kind] ?? { radius: 1, height: 1.5 };
+        const dx = cand.x - self.x, dy = cand.y + size.height * 0.5 - (self.y + 1.2), dz = cand.z - self.z;
+        const d = Math.hypot(dx, dy, dz) || 1;
+        const los = d <= 45 && raycast(world, { x: self.x, y: self.y + 1.2, z: self.z }, { x: dx / d, y: dy / d, z: dz / d }, d) >= d - size.radius - 0.6;
+        if (los) {
+          lockedEnemy = cand;
+          if (now - input.lastLookAt > 180) {
+            const targetYaw = Math.atan2(dx, dz);
+            const targetPitch = Math.atan2(dy, Math.hypot(dx, dz));
+            let dyaw = (targetYaw - input.yaw) % (Math.PI * 2);
+            if (dyaw > Math.PI) dyaw -= Math.PI * 2;
+            if (dyaw < -Math.PI) dyaw += Math.PI * 2;
+            const k = 1 - Math.exp(-8 * dt);
+            input.yaw += dyaw * k;
+            input.pitch += (targetPitch - input.pitch) * k * 0.6;
+          }
+        } else {
+          lockedEnemyId = null;
+        }
+      } else {
+        lockedEnemyId = null;
+      }
+    }
     const speed = Math.hypot(self.vx, self.vy, self.vz);
     follow.update(self.x, self.y, self.z, input.yaw, input.pitch, input.zoom, speed, dt);
     hud.update(self, s.kind === "online");
@@ -667,8 +829,9 @@ function frameWorld(now: number, dt: number) {
   }
   hud.setStatus(s.status());
   hud.updateLabels(players, project);
-  const cam = follow.camera.position;
-  hud.updateEnemyBars(enemies, cam.x, cam.y, cam.z, project);
+  hud.updateEnemyBars(enemies, cam.x, cam.y, cam.z, project, roster?.targetId ?? null);
+  hud.updateLock(lockedEnemy, project);
+  hud.updatePings(dt, roster?.rally ?? null, self, project);
   hud.updatePopups(dt, project);
   if (hud.debugVisible && self) {
     hud.setDebug(

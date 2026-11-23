@@ -364,7 +364,20 @@ export type Fx =
   | { t: "pin"; x: number; y: number; z: number; kind: "arrow" | "shield" }
   | { t: "crossfire"; pts: number[]; mantle: string }
   | { t: "breakwater"; x: number; y: number; z: number; r: number; mantle: string }
-  | { t: "vault"; id: string };
+  | { t: "vault"; id: string }
+  | { t: "boulder"; from: [number, number, number]; to: [number, number, number]; r: number };
+
+export type PingKind = "ping" | "weak" | "revive" | "target" | "rally";
+
+export interface PingMessage {
+  id: string;
+  from: string;
+  kind: PingKind;
+  x: number;
+  y: number;
+  z: number;
+  targetId?: string;
+}
 
 // --- Progression ---------------------------------------------------------------
 

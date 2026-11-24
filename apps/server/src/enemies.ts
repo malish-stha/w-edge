@@ -7,66 +7,87 @@
  * Training dummy: takes hits in the training yard and resets.
  */
 import {
-  ENEMY_KINDS, ENEMY_SIZE, EnemyState, ISLES, MONSTER_MODELS, SEA_LEVEL, type Fx, type World,
-  groundHeightAt,
+  ENEMY_KINDS, ENEMY_SIZE, EnemyState, ISLES, SEA_LEVEL, type Fx, type World,
+  getWorld, groundHeightAt, isleRadius,
 } from "@worlds-edge/shared";
 import { Enemy, type Player, type WorldState } from "./schema.ts";
 
 export interface Spawn { kind: string; x: number; z: number; leash: number; y?: number }
 
-/** Overworld spawns: training dummies, starter wretches/hullbreaker, plus every monster from the packs. */
+/** Who lives on each isle: [isle index, kind, how many]. Danger rises with distance from the harbour. */
+const ISLE_SPAWNS: Array<[number, string, number]> = [
+  [0, "slime", 2], [0, "green-blob", 1],
+  [1, "mushnub", 2], [1, "green-spiky-blob", 1], [1, "armabee", 1],
+  [2, "cactoro", 1],
+  [3, "blue-demon", 2], [3, "demon", 1],
+  [4, "orc", 2], [4, "goleling", 1],
+  [5, "ghost", 2], [5, "ninja", 1], [5, "orc-skull", 1],
+  [6, "ninja-2", 1], [6, "orc-2", 2], [6, "tribal", 1],
+  [7, "cactoro-2", 1], [7, "frog", 2], [7, "dino", 1],
+  [8, "squidle", 2], [8, "fish-4", 1], [8, "mushroom-king", 1],
+];
+/** Open-water hunters along the route: [kind, x, z]. */
+const SEA_SPAWNS: Array<[string, number, number]> = [
+  ["manta-ray", 70, -190], ["jellyfish", -60, -250], ["jellyfish", 90, -520],
+  ["manta-ray", -150, -560], ["shark", 60, -840], ["shark", -50, -1090],
+];
+/** Fliers patrolling the gaps between isles: [kind, x, y, z]. */
+const SKY_SPAWNS: Array<[string, number, number, number]> = [
+  ["hywirl", 100, 55, -360], ["hywirl", -80, 70, -480], ["dragon", 40, 85, -800], ["dragon", -40, 95, -1100],
+];
+
+/**
+ * A clear, flat spot on an isle's top near (x, z): nothing standing on it (trees,
+ * tents, peaks) and away from the spots already taken. Searches outward in a spiral.
+ */
+function clearSpot(world: World, isle: number, x: number, z: number, taken: Array<{ x: number; z: number }>) {
+  const top = ISLES[isle].top + 0.8;
+  for (let i = 0; i < 200; i++) {
+    const a = i * 2.39996, r = Math.sqrt(i) * 2.2;
+    const px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
+    if (Math.hypot(px - ISLES[isle].x, pz - ISLES[isle].z) > isleRadius(isle) * 0.8) continue;
+    if (Math.abs(groundHeightAt(world, px, pz, 400) - top) > 0.05) continue;
+    if (taken.some((t) => Math.hypot(t.x - px, t.z - pz) < 4)) continue;
+    return { x: Math.round(px * 10) / 10, y: top, z: Math.round(pz * 10) / 10 };
+  }
+  return { x, y: top, z };
+}
+
+/** Overworld spawns: training dummies, the starter wretches and Hullbreaker, then each isle's residents. */
 export const WORLD_SPAWNS: Spawn[] = [
   { kind: "dummy", x: -66, z: 38, leash: 0 },
   { kind: "dummy", x: -54, z: 40, leash: 0 },
-  { kind: "wretch", x: 152, z: -292, leash: 22 },
-  { kind: "wretch", x: 166, z: -290, leash: 22 },
-  { kind: "wretch", x: 158, z: -308, leash: 22 },
-  { kind: "wretch", x: 170, z: -306, leash: 22 },
-  { kind: "hullbreaker", x: -120, z: -380, leash: 16 },
-  { kind: "wretch", x: -132, z: -372, leash: 14 },
-  { kind: "wretch", x: -108, z: -390, leash: 14 },
 ];
-
-// Distribute every remaining monster from MONSTER_MODELS across the Broken Isles, skies, and sea.
 {
-  const groundKinds: string[] = [];
-  const flyerKinds: string[] = [];
-  const seaKinds: string[] = [];
-  for (const id of Object.keys(MONSTER_MODELS)) {
-    if (id === "glub" || id === "ember-golem") continue; // used for wretch & hullbreaker
-    const ai = ENEMY_KINDS[id]?.ai;
-    if (ai === "flyer") flyerKinds.push(id);
-    else if (ai === "sea") seaKinds.push(id);
-    else groundKinds.push(id);
+  const world = getWorld();
+  const taken: Array<{ x: number; z: number }> = [];
+  const ground = (kind: string, isle: number, x: number, z: number, leash: number) => {
+    const p = clearSpot(world, isle, x, z, taken);
+    taken.push(p);
+    WORLD_SPAWNS.push({ kind, ...p, leash });
+  };
+  // The starter pack and the Hullbreaker's camp (ids e2–e8, which the checks rely on).
+  for (const [x, z] of [[152, -292], [166, -290], [158, -308], [170, -306]]) ground("wretch", 0, x, z, 22);
+  ground("hullbreaker", 2, -120, -380, 16);
+  ground("wretch", 2, -132, -372, 14);
+  ground("wretch", 2, -108, -390, 14);
+  for (const [isle, kind, count] of ISLE_SPAWNS) {
+    if (!ENEMY_KINDS[kind]) continue;
+    const at = ISLES[isle];
+    for (let n = 0; n < count; n++) {
+      if (ENEMY_KINDS[kind].ai === "flyer") {
+        const a = n * 2.1 + isle;
+        const r = isleRadius(isle) * 0.5;
+        WORLD_SPAWNS.push({ kind, x: Math.round(at.x + Math.cos(a) * r), z: Math.round(at.z + Math.sin(a) * r), y: at.top + 7 + n * 3, leash: 26 });
+      } else {
+        const a = (taken.length * 2.39996) % (Math.PI * 2);
+        const r = isleRadius(isle) * (0.2 + 0.12 * n);
+        ground(kind, isle, at.x + Math.cos(a) * r, at.z + Math.sin(a) * r, Math.round(isleRadius(isle) * 0.6));
+      }
+    }
   }
-  groundKinds.forEach((kind, i) => {
-    const isle = ISLES[i % ISLES.length];
-    const slot = Math.floor(i / ISLES.length);
-    const angle = slot * 2.39996 + (i % ISLES.length);
-    const r = Math.min(isle.size * 0.3, 5 + slot * 3.2);
-    WORLD_SPAWNS.push({
-      kind,
-      x: Math.round(isle.x + Math.cos(angle) * r),
-      z: Math.round(isle.z + Math.sin(angle) * r),
-      leash: Math.round(isle.size * 0.35),
-    });
-  });
-  flyerKinds.forEach((kind, i) => {
-    const isle = ISLES[i % ISLES.length];
-    const angle = i * 1.9;
-    WORLD_SPAWNS.push({
-      kind,
-      x: Math.round(isle.x + Math.cos(angle) * (isle.size * 0.45 + 8)),
-      z: Math.round(isle.z + Math.sin(angle) * (isle.size * 0.45 + 8)),
-      y: isle.top + 8 + (i % 3) * 4,
-      leash: 28,
-    });
-  });
-  seaKinds.forEach((kind, i) => {
-    const z = -220 - i * 95;
-    const x = (i % 2 === 0 ? 1 : -1) * (45 + (i % 4) * 35);
-    WORLD_SPAWNS.push({ kind, x, z, y: SEA_LEVEL - 0.3, leash: 35 });
-  });
+  for (const [kind, x, z] of SEA_SPAWNS) if (ENEMY_KINDS[kind]) WORLD_SPAWNS.push({ kind, x, z, y: SEA_LEVEL - 0.3, leash: 35 });
+  for (const [kind, x, y, z] of SKY_SPAWNS) if (ENEMY_KINDS[kind]) WORLD_SPAWNS.push({ kind, x, z, y, leash: 40 });
 }
 
 interface Brain {

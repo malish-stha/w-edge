@@ -5,8 +5,9 @@
  */
 import { RIM_Z } from "./constants.ts";
 import type { Box, World } from "./world.ts";
-import { SKINS, type Skin } from "./skins.ts";
-import { dressArena } from "./dressing.ts";
+import { collidersFor, dressArena, fitToBlock, place, type Placement } from "./dressing.ts";
+import { buildHexField, hexColliders, hexPlacements } from "./hex.ts";
+import { kd, kh } from "./catalogue.ts";
 
 export const BossPhase = {
   /** Break the three anchor chains. */
@@ -49,6 +50,9 @@ export function partyScale(size: number) {
   return 0.4 + 0.15 * Math.max(1, Math.min(4, size));
 }
 
+/** Models the client's Colossus rig is built from (kept by the asset build). */
+export const COLOSSUS_RIG_MODELS = [kh("mountain_A"), kh("mountain_B"), kh("mountain_C"), kd("wall_cracked")];
+
 const PLATFORM_RADIUS = 42;
 
 /** Centres of the three anchor platforms (tops at y = 8). */
@@ -63,43 +67,66 @@ export const ANCHORS = ANCHOR_PLATFORMS.map((p) => {
   return { x: p.x * k, y: p.y, z: p.z * k };
 });
 
-function box(cx: number, minY: number, cz: number, sx: number, maxY: number, sz: number, color: string, skin: Skin = SKINS.dungeonBlock): Box {
-  return { minX: cx - sx / 2, maxX: cx + sx / 2, minY, maxY, minZ: cz - sz / 2, maxZ: cz + sz / 2, color, region: "arena", skin };
+/** A solid block of the arena, drawn with a stretched pack model (rock, plate). */
+function block(boxes: Box[], placements: Placement[], model: string, cx: number, minY: number, cz: number, sx: number, maxY: number, sz: number) {
+  const b: Box = { minX: cx - sx / 2, maxX: cx + sx / 2, minY, maxY, minZ: cz - sz / 2, maxZ: cz + sz / 2, color: "#000000", region: "arena", hidden: true };
+  boxes.push(b);
+  const p = fitToBlock(model, b.minX, minY, b.minZ, b.maxX, maxY, b.maxZ);
+  if (p) placements.push(p);
+}
+
+/** A platform of hex columns (KayKit tiles) with its top at `top`. */
+function platform(boxes: Box[], placements: Placement[], cx: number, cz: number, rx: number, rz: number, top: number, k: number) {
+  const field = buildHexField({
+    k, ox: cx, oz: cz, x0: cx - rx - k * 2, x1: cx + rx + k * 2, z0: cz - rz - k * 2, z1: cz + rz + k * 2, bottom: -12, region: "arena",
+    height: (x, z) => (Math.hypot((x - cx) / rx, (z - cz) / rz) <= 1 ? top : null),
+  });
+  boxes.push(...hexColliders(field));
+  placements.push(...hexPlacements(field));
 }
 
 let cached: World | undefined;
 
 export function getColossusArena(): World {
   if (cached) return cached;
-  const rock = "#5f6a70", rockDark = "#4a5358", moss = "#6f8f6a", hull = "#6b5a4c", plate = "#8d969e";
   const boxes: Box[] = [];
+  const placements: Placement[] = [];
 
-  // The Colossus itself (solid, so a Lancer can dive onto its shoulders and head).
-  for (const side of [-1, 1]) boxes.push(box(side * 4.5, -20, -1, 4, 6, 5, hull));
-  boxes.push(box(0, 6, -1, 12, 9, 7, hull));
-  boxes.push(box(0, 9, -1, 11, 21, 7, hull));
-  boxes.push(box(0, 19, -1, 18, 23, 7, plate));
-  boxes.push(box(0, 23, -0.5, 5, 28, 5, hull));
-  // A broken hull ledge jutting out below the chest: dive onto it to strike the heart.
-  boxes.push(box(0, 9, 4.5, 8, 11, 4, plate));
+  // The Colossus itself: a giant of stone (solid, so a Lancer can dive onto its shoulders and head).
+  for (const side of [-1, 1]) block(boxes, placements, kh("mountain_C"), side * 4.5, -20, -1, 4, 6, 5);
+  block(boxes, placements, kh("mountain_A"), 0, 6, -1, 12, 9, 7);
+  block(boxes, placements, kh("mountain_B"), 0, 9, -1, 11, 21, 7);
+  block(boxes, placements, kh("mountain_A"), 0, 19, -1, 18, 23, 7);
+  block(boxes, placements, kh("mountain_C"), 0, 23, -0.5, 5, 28, 5);
+  // A broken ledge jutting out below the chest: dive onto it to strike the heart.
+  block(boxes, placements, kh("rock_single_E"), 0, 9, 4.5, 8, 11, 4);
 
   // Anchor platforms, each with a sheltering rock.
   for (const p of ANCHOR_PLATFORMS) {
-    boxes.push(box(p.x, -30, p.z, 16, 7.6, 16, rock, SKINS.dungeonWall));
-    boxes.push(box(p.x, 7.6, p.z, 15, 8, 15, moss, SKINS.grass));
-    boxes.push(box(p.x * 1.08, 8, p.z * 1.08, 6, 13, 3, rockDark, SKINS.dungeonDetail));
+    platform(boxes, placements, p.x, p.z, 9.5, 9.5, p.y, 3);
+    block(boxes, placements, kh("mountain_B"), p.x * 1.08, p.y, p.z * 1.08, 6, 13, 3);
   }
   // Entry platform where parties arrive and regroup.
-  boxes.push(box(0, -30, 84, 24, 7.6, 16, rock, SKINS.dungeonWall));
-  boxes.push(box(0, 7.6, 84, 23, 8, 15, moss, SKINS.grass));
+  platform(boxes, placements, COLOSSUS.entry.x, COLOSSUS.entry.z, 13, 9, 8, 3);
   // Stepping stones between the platforms.
   for (let i = 0; i < 6; i++) {
     const a = (i * Math.PI) / 3 + Math.PI / 6;
-    boxes.push(box(Math.sin(a) * 58, -20, Math.cos(a) * 58, 5, 3 + (i % 3) * 2, 5, rockDark));
+    platform(boxes, placements, Math.sin(a) * 58, Math.cos(a) * 58, 1, 1, 3 + (i % 3) * 2, 2.5);
   }
+  // Ruined pillars standing in the water around the arena.
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2 + 0.3;
+    const p = place(i % 3 ? kd("pillar") : kd("column"), Math.sin(a) * 75, -2, Math.cos(a) * 75, a, 2.2 + (i % 4) * 0.4);
+    if (p) placements.push(p);
+  }
+  const terrain = {
+    id: "terrain:arena", name: "Drowned Colossus", pack: "kaykit-medieval-hexagon", plannedPack: "kaykit-medieval-hexagon",
+    center: { x: 0, y: 8, z: 0 }, loadRadius: Infinity, always: true, placements,
+  };
+  for (const p of placements) boxes.push(...collidersFor(p, "arena"));
   cached = {
     boxes,
-    areas: dressArena(boxes),
+    areas: [terrain, dressArena(boxes)],
     spawn: { ...COLOSSUS.entry },
     landmarks: [{ name: "Drowned Colossus", position: { x: 0, y: 0, z: 0 } }],
   };

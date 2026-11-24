@@ -64,25 +64,84 @@ void main() {
 Effect.ShadersStore["oceanFragmentShader"] = /* glsl */ `
 precision highp float;
 uniform vec3 cameraPos;
+uniform vec3 sunDir;
 uniform float rimZ;
 uniform float time;
+/** Island outlines (x, z, radius, wobble seed), matching the terrain's hex outlines. */
+uniform vec4 isles[ISLE_COUNT];
+/** 1 in the overworld (coasts, harbour), 0 in dungeon arenas. */
+uniform float coasts;
 varying vec3 vWorld;
 varying float vWave;
 ${FOG}
+
+float wobble(float a, float seed) {
+  return 1.0 + 0.07 * sin(a * 3.0 + seed) + 0.05 * sin(a * 5.0 + seed * 2.3) + 0.03 * sin(a * 9.0 + seed * 4.1);
+}
+
+/** Metres from the nearest coast (negative inside land). */
+float coastDistance(vec2 p) {
+  float d = 1e4;
+  for (int i = 0; i < ISLE_COUNT; i++) {
+    vec2 q = p - isles[i].xy;
+    float r = isles[i].z * wobble(atan(q.y, q.x), isles[i].w);
+    d = min(d, length(q) - r);
+  }
+  // First Harbour: a rounded square island with the dock shelf on its south side.
+  vec2 h = abs(p) / vec2(118.0, 102.0);
+  float f = pow(pow(h.x, 2.4) + pow(h.y, 2.4), 1.0 / 2.4);
+  float hw = pow(wobble(atan(p.y, p.x), 0.7), 1.0 / 2.4);
+  d = min(d, (f - hw) * 108.0);
+  float shelfHalf = 86.0 - 28.0 * pow(clamp((p.y - 86.0) / 40.0, 0.0, 1.0), 2.0);
+  vec2 s = vec2(abs(p.x) - shelfHalf, max(86.0 - p.y, p.y - 126.0));
+  d = min(d, length(max(s, 0.0)) + min(max(s.x, s.y), 0.0));
+  return d;
+}
+
 void main() {
   if (vWorld.z < rimZ) discard;
-  vec3 deep = vec3(0.10, 0.36, 0.55);
-  vec3 shallow = vec3(0.20, 0.58, 0.70);
+  vec3 deep = vec3(0.08, 0.33, 0.52);
+  vec3 mid = vec3(0.16, 0.52, 0.66);
+  vec3 reef = vec3(0.28, 0.74, 0.74);
   vec3 bright = vec3(0.62, 0.86, 0.92);
+  float dist = distance(vWorld, cameraPos);
   // Broad bands of colour that brighten toward the rim.
   float toRim = clamp(1.0 - (vWorld.z - rimZ) / 900.0, 0.0, 1.0);
   float band = floor((vWave * 0.5 + 0.5) * 3.0) / 3.0;
-  vec3 c = mix(deep, shallow, band * 0.6);
+  vec3 c = mix(deep, mid, band * 0.6);
+
+  // Turquoise shallows and rolling surf around the islands.
+  float foam = 0.0;
+  if (coasts > 0.5) {
+    float d = coastDistance(vWorld.xz);
+    float shallow = smoothstep(34.0, 2.0, d);
+    c = mix(c, reef, shallow * 0.75);
+    float n = sin(vWorld.x * 0.21 + vWorld.z * 0.17) * 0.5 + sin(vWorld.x * 0.07 - vWorld.z * 0.11 + time * 0.3) * 0.5;
+    float roll = sin(d * 0.9 - time * 1.8 + n * 2.0) * 0.5 + 0.5;
+    foam = smoothstep(7.0, 0.5, d) * (0.45 + 0.55 * step(0.62, roll));
+    foam = max(foam, smoothstep(2.2, 0.0, d));
+  }
   c = mix(c, bright, toRim * toRim * 0.7);
-  // Foam on crests and at the very edge.
-  float foam = step(1.05, vWave) * 0.35 + smoothstep(rimZ + 25.0, rimZ, vWorld.z) * 0.8;
-  c = mix(c, vec3(0.95), foam);
-  gl_FragColor = vec4(applyFog(c, distance(vWorld, cameraPos)), 1.0);
+
+  // Small ripples catch the sun; the sky shows at grazing angles.
+  vec3 v = normalize(cameraPos - vWorld);
+  vec2 rp = vWorld.xz;
+  vec2 slope = vec2(
+    cos(rp.x * 0.9 + time * 2.1) * 0.05 + cos((rp.x + rp.y) * 0.53 - time * 1.4) * 0.05 + cos(rp.x * 0.045 + time * 0.9) * 0.012,
+    cos(rp.y * 0.8 - time * 1.9) * 0.05 + cos((rp.x - rp.y) * 0.61 + time * 1.2) * 0.05 + cos(rp.y * 0.06 - time * 1.1) * 0.015);
+  // Fine ripples fade out with distance (they'd only shimmer as moiré out there).
+  slope *= smoothstep(520.0, 60.0, dist);
+  vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
+  float fresnel = pow(1.0 - max(dot(n, v), 0.0), 4.0);
+  c = mix(c, vec3(0.70, 0.84, 0.95), fresnel * 0.45);
+  float glint = pow(max(dot(reflect(-v, n), normalize(sunDir)), 0.0), 220.0);
+  c += vec3(1.0, 0.95, 0.85) * glint * 1.6 * smoothstep(1400.0, 200.0, dist);
+
+  // Foam on crests, around the islands and at the very edge.
+  foam = max(foam, step(1.05, vWave) * 0.35);
+  foam = max(foam, smoothstep(rimZ + 25.0, rimZ, vWorld.z) * 0.8);
+  c = mix(c, vec3(0.96, 0.98, 1.0), foam * 0.9);
+  gl_FragColor = vec4(applyFog(c, dist), 1.0);
 }`;
 
 Effect.ShadersStore["waterfallVertexShader"] = /* glsl */ `

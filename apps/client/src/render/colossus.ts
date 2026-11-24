@@ -3,19 +3,22 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh.js";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder.js";
+import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder.js";
 import { CreateLines } from "@babylonjs/core/Meshes/Builders/linesBuilder.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
-import { ANCHORS, BossPhase, COLOSSUS } from "@worlds-edge/shared";
+import { ANCHORS, BossPhase, COLOSSUS, kd, kh } from "@worlds-edge/shared";
+import type { Dressing } from "./dressing.ts";
 import type { BossView, EnemyView } from "../session.ts";
 import { mat } from "./character.ts";
 
 const damp = (c: number, t: number, rate: number, dt: number) => c + (t - c) * (1 - Math.exp(-rate * dt));
 
 /**
- * The moving parts of the Drowned Colossus. Its body is static arena geometry;
- * this adds the arms (slam and sweep), the chest plate that swings open when
- * broken, glowing eyes, the anchor chains and the wave.
+ * The moving parts of the Drowned Colossus. Its body is static arena geometry
+ * (stone from the packs); this adds arms of rock (slam and sweep), the carved
+ * stone chest plate that swings open when broken, glowing eyes, the anchor
+ * chains and the wave.
  */
 export class ColossusRig {
   private nodes: TransformNode[] = [];
@@ -26,10 +29,23 @@ export class ColossusRig {
   private chains: LinesMesh[] = [];
   private wave: TransformNode;
   private t = 0;
+  private disposed = false;
 
-  constructor(scene: Scene) {
-    const hull = mat(scene, "#6b5a4c"), plateMat = mat(scene, "#8d969e"), seam = mat(scene, "#3a2f28");
-    const box = (name: string, parent: TransformNode, w: number, h: number, d: number, x: number, y: number, z: number, m = hull) => {
+  constructor(scene: Scene, dressing: Dressing) {
+    /** A pack model stretched to a w×h×d block centred on (x, y, z) under `parent`. */
+    const part = (name: string, parent: TransformNode, model: string, w: number, h: number, d: number, x: number, y: number, z: number) => {
+      void dressing.instance(model).then((m) => {
+        if (!m || this.disposed) { m?.dispose(); return; }
+        const b = m.getBoundingInfo().boundingBox;
+        const size = b.maximum.subtract(b.minimum), mid = b.maximum.add(b.minimum).scale(0.5);
+        m.name = name;
+        m.parent = parent;
+        m.scaling.set(w / Math.max(0.01, size.x), h / Math.max(0.01, size.y), d / Math.max(0.01, size.z));
+        m.position.set(x - mid.x * m.scaling.x, y - mid.y * m.scaling.y, z - mid.z * m.scaling.z);
+        this.meshes.push(m);
+      });
+    };
+    const box = (name: string, parent: TransformNode, w: number, h: number, d: number, x: number, y: number, z: number, m: ReturnType<typeof mat>) => {
       const b = CreateBox(name, { width: w, height: h, depth: d }, scene);
       b.parent = parent; b.position.set(x, y, z); b.material = m; b.isPickable = false;
       this.meshes.push(b);
@@ -43,21 +59,25 @@ export class ColossusRig {
       return n;
     };
 
-    // Arms hang from the shoulders; each pivots at the shoulder.
+    // Arms of rock hang from the shoulders; each pivots at the shoulder.
     for (const side of [-1, 1]) {
       const shoulder = node(`shoulder${side}`, side * 10, 21, -1);
-      box(`upper${side}`, shoulder, 3.4, 9, 3.4, 0, -4.5, 0);
-      box(`fore${side}`, shoulder, 3, 8, 3, 0, -12.5, 0.5, mat(scene, "#7a6656"));
-      box(`fist${side}`, shoulder, 4.2, 3.6, 4.2, 0, -18, 0.8, seam);
+      part(`upper${side}`, shoulder, kh("mountain_B"), 3.8, 9.5, 3.8, 0, -4.5, 0);
+      part(`fore${side}`, shoulder, kh("mountain_C"), 3.4, 8.5, 3.4, 0, -12.5, 0.5);
+      part(`fist${side}`, shoulder, kh("mountain_A"), 4.8, 4, 4.8, 0, -18, 0.8);
       this.arms.push(shoulder);
     }
     // Chest plate in front of the heart, hinged at its bottom edge on the ledge: it falls open outward.
     this.plate = node("plate", 0, 11, 4.9);
-    box("plateFace", this.plate, 8.5, 9, 0.6, 0, 4.5, 0, plateMat);
-    for (const y of [2, 4.5, 7]) box(`plateSeam${y}`, this.plate, 8.6, 0.25, 0.65, 0, y, 0, seam);
+    part("plateFace", this.plate, kd("wall_cracked"), 8.5, 9, 0.8, 0, 4.5, 0);
     // Eyes on the front of the head.
     const head = node("head", 0, 26, 2.05);
-    for (const side of [-1, 1]) this.eyes.push(box(`eye${side}`, head, 0.9, 0.5, 0.2, side * 1.1, 0, 0, mat(scene, "#7fe8ff", { glow: 1 })));
+    for (const side of [-1, 1]) {
+      const eye = CreateSphere(`eye${side}`, { diameterX: 1.1, diameterY: 0.6, diameterZ: 0.4, segments: 6 }, scene);
+      eye.parent = head; eye.position.set(side * 1.1, 0, 0); eye.material = mat(scene, "#7fe8ff", { glow: 1 }); eye.isPickable = false;
+      this.meshes.push(eye);
+      this.eyes.push(eye);
+    }
     // Chains from each anchor to the Colossus's waist.
     for (const [i, a] of ANCHORS.entries()) {
       const end = new Vector3(Math.sign(a.x) * 5 || 0, 12, a.z > 0 ? 2.5 : -4);
@@ -130,6 +150,7 @@ export class ColossusRig {
   }
 
   dispose() {
+    this.disposed = true;
     for (const m of this.meshes) m.dispose();
     for (const l of this.chains) l.dispose();
     for (const n of this.nodes) n.dispose();

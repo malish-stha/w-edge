@@ -269,82 +269,95 @@ export const ENEMY_SIZE: Record<string, { radius: number; height: number }> = {
   heart: { radius: 4.2, height: 8 },
 };
 
-const FLYERS = new Set([
-  "ashwing-drake", "dragon", "dragon-evolved", "armabee", "armabee-evolved",
-  "bat", "birb", "birb-2", "pigeon", "pigeon-2", "ghost", "ghost-skull",
-  "alpaking", "alpaking-evolved", "hywirl",
-]);
-const SEA = new Set([
-  "anglerfish", "dolphin", "fish", "fish-1", "fish-2", "fish-3",
-  "jellyfish", "manta-ray", "shark", "shark-2", "whale",
-]);
-const BRUTES = new Set([
-  "yeti", "yeti-2", "rhino", "hippo", "dino", "orc", "orc-2", "orc-skull",
-  "demon", "demon-2", "blue-demon", "goleling-evolved", "mushroom-king",
-  "mushnub-evolved", "glub-evolved", "tribal", "tribal-2",
-]);
-
-function displayName(id: string): string {
-  return id.replace(/-\d+$/, "").split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+/**
+ * The bestiary of the Broken Isles: which monster model plays which creature,
+ * how tough it is (tier 1 = starter isle … 4 = the far isles), and how it fights.
+ * Each isle has its own residents (see ISLE_SPAWNS in the server), so the danger
+ * rises the further you fly from First Harbour.
+ */
+export interface Beast {
+  model: string;
+  name: string;
+  ai: EnemyAi;
+  tier: 1 | 2 | 3 | 4;
+  /** Body height in metres (defaults by AI). */
+  height?: number;
 }
 
-for (const id of Object.keys(MONSTER_MODELS)) {
-  if (id === "glub" || id === "ember-golem") continue; // mapped to wretch & hullbreaker
-  if (FLYERS.has(id)) {
-    const boss = id === "ashwing-drake" || id === "dragon-evolved";
-    ENEMY_KINDS[id] = {
-      name: displayName(id),
-      hp: boss ? 240 : 65,
-      guard: boss ? 95 : 25,
-      xp: boss ? 70 : 18,
-      speed: boss ? 7.5 : 6.5,
-      aggroRange: boss ? 26 : 20,
-      respawnSeconds: boss ? 45 : 25,
-      model: id,
-      ai: "flyer",
-    };
-    ENEMY_SIZE[id] = boss ? { radius: 1.8, height: 3.0 } : { radius: 0.9, height: 1.4 };
-  } else if (SEA.has(id)) {
-    const big = id === "whale" || id === "shark" || id === "shark-2" || id === "manta-ray";
-    ENEMY_KINDS[id] = {
-      name: displayName(id),
-      hp: big ? 160 : 50,
-      guard: big ? 60 : 20,
-      xp: big ? 40 : 14,
-      speed: big ? 6 : 5,
-      aggroRange: 20,
-      respawnSeconds: 25,
-      model: id,
-      ai: "sea",
-    };
-    ENEMY_SIZE[id] = big ? { radius: 1.5, height: 2.2 } : { radius: 0.8, height: 1.2 };
-  } else if (BRUTES.has(id)) {
-    ENEMY_KINDS[id] = {
-      name: displayName(id),
-      hp: 160,
-      guard: 65,
-      xp: 45,
-      speed: 3.6,
-      aggroRange: 20,
-      respawnSeconds: 35,
-      model: id,
-      ai: "hullbreaker",
-    };
-    ENEMY_SIZE[id] = { radius: 1.3, height: 2.3 };
-  } else {
-    ENEMY_KINDS[id] = {
-      name: displayName(id),
-      hp: 55,
-      guard: 22,
-      xp: 15,
-      speed: 5.2,
-      aggroRange: 18,
-      respawnSeconds: 20,
-      model: id,
-      ai: "wretch",
-    };
-    ENEMY_SIZE[id] = { radius: 0.85, height: 1.35 };
-  }
+export const BESTIARY: Record<string, Beast> = {
+  // Wretch isle (tier 1)
+  slime: { model: "slime", name: "Tidepool Slime", ai: "wretch", tier: 1, height: 0.9 },
+  "green-blob": { model: "green-blob", name: "Kelp Blob", ai: "wretch", tier: 1, height: 1.2 },
+  // Pinecrest and the castaway camp (tier 2)
+  mushnub: { model: "mushnub", name: "Pine Mushnub", ai: "wretch", tier: 2, height: 1.5 },
+  "green-spiky-blob": { model: "green-spiky-blob", name: "Burr Blob", ai: "wretch", tier: 2, height: 1.6 },
+  armabee: { model: "armabee", name: "Thornbee", ai: "flyer", tier: 2 },
+  cactoro: { model: "cactoro", name: "Driftspine", ai: "wretch", tier: 2, height: 1.6 },
+  hywirl: { model: "hywirl", name: "Whirlwing", ai: "flyer", tier: 2 },
+  "manta-ray": { model: "manta-ray", name: "Gale Ray", ai: "sea", tier: 2, height: 1.3 },
+  jellyfish: { model: "jellyfish", name: "Drift Jelly", ai: "sea", tier: 2, height: 1.4 },
+  // Ember spire, the farmstead and Darkwood (tier 3)
+  "blue-demon": { model: "blue-demon", name: "Cinder Fiend", ai: "wretch", tier: 3, height: 1.9 },
+  demon: { model: "demon", name: "Ember Imp", ai: "flyer", tier: 3 },
+  orc: { model: "orc", name: "Field Raider", ai: "wretch", tier: 3, height: 1.8 },
+  goleling: { model: "goleling", name: "Hay Goleling", ai: "flyer", tier: 3 },
+  ghost: { model: "ghost", name: "Darkwood Wisp", ai: "flyer", tier: 3 },
+  ninja: { model: "ninja", name: "Shade", ai: "wretch", tier: 3, height: 1.7 },
+  shark: { model: "shark", name: "Reef Shark", ai: "sea", tier: 3, height: 2 },
+  dragon: { model: "dragon", name: "Wind Drake", ai: "flyer", tier: 3, height: 2 },
+  // Smuggler's cove, Palm reach and Wreck spire (tier 4)
+  "orc-skull": { model: "orc-skull", name: "Barrow Knight", ai: "hullbreaker", tier: 4, height: 2.4 },
+  "ninja-2": { model: "ninja-2", name: "Cove Cutthroat", ai: "wretch", tier: 4, height: 2 },
+  "orc-2": { model: "orc-2", name: "Smuggler", ai: "wretch", tier: 4, height: 2 },
+  tribal: { model: "tribal", name: "Gullrider", ai: "flyer", tier: 4 },
+  "cactoro-2": { model: "cactoro-2", name: "Spinebloom", ai: "wretch", tier: 4, height: 2.1 },
+  frog: { model: "frog", name: "Mire Toad", ai: "wretch", tier: 4, height: 1.7 },
+  dino: { model: "dino", name: "Reef Saurian", ai: "hullbreaker", tier: 4, height: 2.4 },
+  squidle: { model: "squidle", name: "Wreck Squidle", ai: "flyer", tier: 4 },
+  "fish-4": { model: "fish-4", name: "Deep Lurker", ai: "wretch", tier: 4, height: 2 },
+  "mushroom-king": { model: "mushroom-king", name: "Barnacle King", ai: "hullbreaker", tier: 4, height: 2.6 },
+};
+
+/** Health, guard, XP and speed by tier, for each way of fighting. */
+const TIER_STATS: Record<EnemyAi, Array<Pick<EnemyKind, "hp" | "guard" | "xp" | "speed" | "aggroRange">>> = {
+  wretch: [
+    { hp: 40, guard: 18, xp: 10, speed: 4.6, aggroRange: 14 },
+    { hp: 70, guard: 28, xp: 20, speed: 5, aggroRange: 17 },
+    { hp: 100, guard: 40, xp: 30, speed: 5.3, aggroRange: 18 },
+    { hp: 135, guard: 52, xp: 40, speed: 5.6, aggroRange: 19 },
+  ],
+  flyer: [
+    { hp: 40, guard: 16, xp: 12, speed: 6, aggroRange: 16 },
+    { hp: 60, guard: 24, xp: 22, speed: 6.5, aggroRange: 20 },
+    { hp: 85, guard: 32, xp: 30, speed: 7, aggroRange: 22 },
+    { hp: 115, guard: 44, xp: 42, speed: 7.4, aggroRange: 24 },
+  ],
+  sea: [
+    { hp: 40, guard: 16, xp: 10, speed: 5, aggroRange: 16 },
+    { hp: 60, guard: 22, xp: 18, speed: 5.5, aggroRange: 18 },
+    { hp: 140, guard: 55, xp: 38, speed: 6, aggroRange: 20 },
+    { hp: 180, guard: 70, xp: 50, speed: 6.4, aggroRange: 22 },
+  ],
+  hullbreaker: [
+    { hp: 160, guard: 60, xp: 40, speed: 3, aggroRange: 18 },
+    { hp: 190, guard: 72, xp: 50, speed: 3.2, aggroRange: 20 },
+    { hp: 220, guard: 85, xp: 60, speed: 3.4, aggroRange: 22 },
+    { hp: 260, guard: 100, xp: 75, speed: 3.6, aggroRange: 22 },
+  ],
+};
+
+const DEFAULT_HEIGHT: Record<EnemyAi, number> = { wretch: 1.35, flyer: 1.5, sea: 1.2, hullbreaker: 2.3 };
+
+for (const [id, beast] of Object.entries(BESTIARY)) {
+  if (!MONSTER_MODELS[beast.model]) continue;
+  const stats = TIER_STATS[beast.ai][beast.tier - 1];
+  ENEMY_KINDS[id] = {
+    name: beast.name, ...stats,
+    respawnSeconds: beast.ai === "hullbreaker" ? 40 : 22,
+    model: beast.model, ai: beast.ai,
+  };
+  const height = beast.height ?? DEFAULT_HEIGHT[beast.ai];
+  ENEMY_SIZE[id] = { radius: Math.max(0.6, height * 0.55), height };
 }
 
 // --- Effects the server broadcasts (one batch per tick) ------------------------

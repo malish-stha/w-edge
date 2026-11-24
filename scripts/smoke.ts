@@ -6,6 +6,7 @@
  * Usage (server + client dev servers running):
  *   npx tsx scripts/smoke.ts <outDir> [http://localhost:5173/] [browserPath]
  */
+import { BROWSER_ARGS } from "./browser-args.ts";
 import { chromium, type Page } from "playwright-core";
 
 const out = process.argv[2] ?? "shots";
@@ -14,7 +15,7 @@ const exe = process.argv[4] ?? "C:/Program Files (x86)/Microsoft/Edge/Applicatio
 const url = `${base}${base.includes("?") ? "&" : "?"}test`;
 const tag = Math.random().toString(36).replace(/[^a-z]/g, "").slice(0, 4);
 
-const browser = await chromium.launch({ executablePath: exe, headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+const browser = await chromium.launch({ executablePath: exe, headless: true, args: BROWSER_ARGS });
 const errors: string[] = [];
 const check = (ok: boolean, what: string) => { console.log(`${ok ? "✔" : "✖"} ${what}`); if (!ok) errors.push(what); };
 

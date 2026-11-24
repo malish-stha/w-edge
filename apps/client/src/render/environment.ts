@@ -7,11 +7,13 @@ import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder.js";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial.js";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
-import { RIM_Z, SEA_LEVEL, type World } from "@worlds-edge/shared";
+import { ISLES, RIM_Z, SEA_LEVEL, isleRadius, type World } from "@worlds-edge/shared";
 import { FOG_COLOR } from "./shaders.ts";
 
 const FOG = Color3.FromArray(FOG_COLOR as unknown as number[]);
-const SUN_DIR = new Vector3(0.4, 0.55, 0.75).normalize();
+/** Toward the sun (the sky's sun disc and the scene's sun light). */
+export const SUN_DIRECTION = new Vector3(0.4, 0.62, 0.68).normalize();
+const SUN_DIR = SUN_DIRECTION;
 
 function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
@@ -41,7 +43,7 @@ export function buildWorldMesh(scene: Scene, world: World): Mesh {
 
   for (const b of world.boxes) {
     // Colliders and skinned blocks are drawn with pack models (render/dressing.ts), never as boxes.
-    if (b.hidden || b.skin) continue;
+    if (b.hidden) continue;
     const [r, g, bl] = hexToRgb(b.color);
     const vary = jitter(); // painted colour variation per block
     const glow = b.tag === "beacon" || b.tag === "shrine" || b.tag === "gate" ? 1.25 : 1;
@@ -58,6 +60,11 @@ export function buildWorldMesh(scene: Scene, world: World): Mesh {
   }
 
   const mesh = new Mesh("world", scene);
+  // Everything in the world is drawn with pack models; boxes only show if one is left visible.
+  if (!positions.length) {
+    mesh.setEnabled(false);
+    return mesh;
+  }
   const data = new VertexData();
   data.positions = positions;
   data.colors = colors;
@@ -81,6 +88,8 @@ export function buildWorldMesh(scene: Scene, world: World): Mesh {
 export interface Environment {
   /** `world` is the current static world mesh (overworld or dungeon arena). */
   update(cameraPos: Vector3, timeSeconds: number, world: Mesh): void;
+  /** Surf and shallows around the overworld's islands (off in dungeon arenas). */
+  setCoasts(on: boolean): void;
 }
 
 /** Sky dome, ocean that follows the camera, and the waterfall curtain at the rim. */
@@ -106,9 +115,13 @@ export function buildEnvironment(scene: Scene, oceanSubdivisions: number): Envir
   const cell = size / oceanSubdivisions;
   const oceanMat = new ShaderMaterial("oceanMat", scene, { vertex: "ocean", fragment: "ocean" }, {
     attributes: ["position"],
-    uniforms: ["world", "viewProjection", "time", "cameraPos", "rimZ", "fogColor", "fogDensity"],
+    uniforms: ["world", "viewProjection", "time", "cameraPos", "rimZ", "fogColor", "fogDensity", "sunDir", "isles", "coasts"],
+    defines: [`#define ISLE_COUNT ${ISLES.length}`],
   });
   oceanMat.setFloat("rimZ", RIM_Z);
+  oceanMat.setVector3("sunDir", SUN_DIR);
+  oceanMat.setArray4("isles", ISLES.flatMap((isle, i) => [isle.x, isle.z, isleRadius(i), i * 1.7 + 0.3]));
+  oceanMat.setFloat("coasts", 1);
   oceanMat.setColor3("fogColor", FOG);
   oceanMat.setFloat("fogDensity", 1 / 1400);
   oceanMat.backFaceCulling = false;
@@ -133,6 +146,9 @@ export function buildEnvironment(scene: Scene, oceanSubdivisions: number): Envir
   fall.freezeWorldMatrix();
 
   return {
+    setCoasts(on) {
+      oceanMat.setFloat("coasts", on ? 1 : 0);
+    },
     update(cameraPos, t, world) {
       ocean.position.x = Math.round(cameraPos.x / cell) * cell;
       ocean.position.z = Math.round(cameraPos.z / cell) * cell;
@@ -140,7 +156,7 @@ export function buildEnvironment(scene: Scene, oceanSubdivisions: number): Envir
       oceanMat.setVector3("cameraPos", cameraPos);
       fallMat.setFloat("time", t);
       fallMat.setVector3("cameraPos", cameraPos);
-      (world.material as ShaderMaterial).setVector3("cameraPos", cameraPos);
+      (world.material as ShaderMaterial | null)?.setVector3("cameraPos", cameraPos);
     },
   };
 }

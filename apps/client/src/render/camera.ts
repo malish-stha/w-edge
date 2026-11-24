@@ -22,6 +22,14 @@ export class FollowCamera {
     this.camera.fov = 1.0;
   }
 
+  /** The point the camera orbits, pushed ahead along the view by `ahead` × 100 m (to centre shadows on what's visible). */
+  focusAhead(ahead: number): Vector3 {
+    const fwd = this.target.subtract(this.camera.position);
+    fwd.y = 0;
+    const len = fwd.length();
+    return len > 0.01 ? this.target.add(fwd.scale((ahead * 100) / len)) : this.target.clone();
+  }
+
   /** Brief camera kick for heavy skills, slams, and ultimates. */
   punch(amount: number) {
     this.shake = Math.min(0.6, Math.max(this.shake, amount));

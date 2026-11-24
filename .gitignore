@@ -8,3 +8,4 @@ dist/
 shots/
 data/
 .asset-cache/
+apps/client/public/env-preview/

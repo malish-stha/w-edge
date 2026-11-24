@@ -6,3 +6,6 @@ export * from "./combat.ts";
 export * from "./monster-models.ts";
 export * from "./colossus.ts";
 export * from "./dressing.ts";
+export * from "./hex.ts";
+export * from "./catalogue.ts";
+export * from "./env-models.ts";

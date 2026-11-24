@@ -1,6 +1,7 @@
 import { Engine } from "@babylonjs/core/Engines/engine.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
+import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import {
@@ -10,9 +11,11 @@ import {
 } from "@worlds-edge/shared";
 import { ColossusRig } from "./render/colossus.ts";
 import { Dressing } from "./render/dressing.ts";
+import { Atmosphere } from "./render/atmosphere.ts";
+import { Ambience } from "./render/ambience.ts";
 import { FOG_COLOR } from "./render/shaders.ts";
 import "./render/shaders.ts";
-import { buildEnvironment, buildWorldMesh } from "./render/environment.ts";
+import { SUN_DIRECTION, buildEnvironment, buildWorldMesh } from "./render/environment.ts";
 import { CharacterRig, lookKey, type CharacterLook } from "./render/character.ts";
 import { EnemyRig } from "./render/enemy.ts";
 import { Effects } from "./render/effects.ts";
@@ -69,8 +72,15 @@ scene.fogMode = Scene.FOGMODE_EXP2;
 scene.fogDensity = 1 / 1400;
 scene.fogColor = new Color3(...FOG_COLOR);
 
-const light = new HemisphericLight("sun", new Vector3(0.3, 1, 0.4), scene);
-light.groundColor = new Color3(0.45, 0.5, 0.6);
+// Sky light from above plus a warm sun from the same direction as the sky's sun disc.
+const light = new HemisphericLight("sky", new Vector3(0.1, 1, 0.2), scene);
+light.intensity = 0.62;
+light.diffuse = new Color3(0.86, 0.92, 1);
+light.groundColor = new Color3(0.42, 0.4, 0.38);
+const sun = new DirectionalLight("sun", SUN_DIRECTION.scale(-1), scene);
+sun.intensity = 0.78;
+sun.diffuse = new Color3(1, 0.94, 0.84);
+sun.specular = Color3.Black();
 
 /** The static geometry currently shown: the overworld, or a dungeon arena. */
 let world: World = getWorld();
@@ -80,6 +90,29 @@ const dressing = new Dressing(scene);
 dressing.setWorld(world);
 const follow = new FollowCamera(scene, world);
 scene.activeCamera = follow.camera;
+const atmosphere = new Atmosphere(scene, follow.camera, sun, qualityName);
+const ambience = new Ambience(scene, qualityName);
+ambience.setWorld(world, true);
+// Solid models throw shadows; flat ground only shows them; clouds do neither.
+dressing.onMesh = (mesh, model) => {
+  if (model.includes("/cloud_")) return;
+  if (/hex_grass$|floor_|patch-|grass|flower/.test(model)) atmosphere.addReceiver(mesh);
+  else atmosphere.addCaster(mesh);
+};
+/** Character and monster meshes already throwing shadows. */
+const shadowed = new WeakSet<object>();
+function castRigShadows() {
+  if (!atmosphere.shadowsOn) return;
+  const roots = [...rigs.values(), ...enemyRigs.values()].map((r) => r.root);
+  if (preview) roots.push(preview.rig.root);
+  for (const root of roots) {
+    for (const mesh of root.getChildMeshes(false)) {
+      if (shadowed.has(mesh) || !mesh.isVisible || mesh.name.includes("shadow")) continue;
+      shadowed.add(mesh);
+      atmosphere.addCaster(mesh);
+    }
+  }
+}
 
 function setWorld(next: World) {
   if (next === world) return;
@@ -88,11 +121,14 @@ function setWorld(next: World) {
   worldMesh = buildWorldMesh(scene, next);
   follow.world = next;
   dressing.setWorld(next);
+  env.setCoasts(next === getWorld());
+  ambience.setWorld(next, next === getWorld());
 }
 
 const input = new Input(canvas);
 input.forceActive = params.has("test");
 const hud = new Hud();
+hud.restoreHelp();
 const menus = new Menus();
 const menu = document.getElementById("menu") as HTMLDivElement;
 const url = serverUrl();
@@ -132,6 +168,10 @@ let pingDownAt = 0;
 let prevSelfPos: { x: number; y: number; z: number } | null = null;
 let prevSelfTpCd = 0;
 let lastLocalTpAt = 0;
+/** Frames since start, for occasional work in the render loop. */
+let shadowScan = 0;
+/** Consecutive slow frame-rate windows (see adaptResolution). */
+let slowWindows = 0;
 
 function clearRigs() {
   for (const rig of rigs.values()) rig.dispose();
@@ -738,6 +778,9 @@ function adaptResolution(now: number) {
   const fps = (fpsFrames * 1000) / (now - fpsWindowStart);
   fpsFrames = 0;
   fpsWindowStart = now;
+  // Slow twice in a row: shadows go first (they cost geometry, which fewer pixels don't save).
+  slowWindows = fps < 40 ? slowWindows + 1 : 0;
+  if (slowWindows >= 2 && atmosphere.shadowsOn) { atmosphere.disableShadows(); slowWindows = 0; return; }
   if (fps < 45 && scaling < quality.maxScale) scaling = Math.min(quality.maxScale, scaling + 0.25);
   else if (fps > 58 && scaling > quality.scale) scaling = Math.max(quality.scale, scaling - 0.25);
   else return;
@@ -809,7 +852,7 @@ function frameWorld(now: number, dt: number) {
   if (partyPanelOpen && now - partyPanelRendered > 1000) renderPartyPanel();
 
   const boss = s.boss();
-  if (boss && !colossusRig) colossusRig = new ColossusRig(scene);
+  if (boss && !colossusRig) colossusRig = new ColossusRig(scene, dressing);
   colossusRig?.update(boss!, enemies, dt);
   hud.updateBoss(boss);
 
@@ -867,7 +910,7 @@ function frameWorld(now: number, dt: number) {
   if (hud.debugVisible && self) {
     hud.setDebug(
       `fps ${engine.getFps().toFixed(0)}  scale ${scaling.toFixed(2)}  quality ${qualityName}\n` +
-      `meshes ${scene.getActiveMeshes().length}  players ${players.length}  dressed areas ${dressing.loadedAreas}\n` +
+      `meshes ${scene.getActiveMeshes().length}  tris ${(scene.getActiveIndices() / 3000).toFixed(0)}k  players ${players.length}  areas ${dressing.loadedAreas}\n` +
       `pos ${self.x.toFixed(1)}, ${self.y.toFixed(1)}, ${self.z.toFixed(1)}`,
     );
   }
@@ -913,8 +956,12 @@ engine.runRenderLoop(() => {
     follow.update(world.spawn.x + 60, 30, world.spawn.z, t * 0.05 + 2.2, -0.25, 60, 0, dt);
   }
 
-  env.update(follow.camera.position, (now - startTime) / 1000, worldMesh);
-  dressing.update(follow.camera.position);
+  const time = (now - startTime) / 1000;
+  env.update(follow.camera.position, time, worldMesh);
+  dressing.update(follow.camera.position, time);
+  atmosphere.update(follow.focusAhead(atmosphere.shadows ? 0.3 : 0));
+  ambience.update(follow.camera.position);
+  if (++shadowScan % 20 === 0) castRigShadows();
   adaptResolution(now);
   scene.render();
 });

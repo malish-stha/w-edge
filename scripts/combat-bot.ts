@@ -120,15 +120,22 @@ check(me.xp > xpBefore, `killing a wretch gives XP (${xpBefore} → ${me.xp}, le
   const seen = fx.slice(mark);
   check(seen.some((f) => f.t === "hurt" && f.id === room.sessionId && f.n === 25), "the Hullbreaker's charge hits for 25");
   check(sawExposed, "the Hullbreaker exposes its back after charging");
-  // Its shield blocks a frontal attack.
+  // Its shield blocks a frontal attack (once it has recovered and turned to face us).
+  for (let i = 0; i < 30 * 4 && (hb.state === 5 || hb.state === 4); i++) await send(1, () => ({}));
   const front = fx.length;
-  await teleport(hb.x + Math.sin(hb.facing) * 2.5, hb.y + 0.5, hb.z + Math.cos(hb.facing) * 2.5);
-  await send(12, () => ({ yaw: yawTo(hb.x, hb.z), buttons: attackEvery(12) }));
+  for (let tries = 0; tries < 6 && !fx.slice(front).some((f) => f.t === "hit" && f.blocked); tries++) {
+    // Step right in front of it (it keeps moving), swing, and let the swing play out.
+    await teleport(hb.x + Math.sin(hb.facing) * 2.2, hb.y + 0.5, hb.z + Math.cos(hb.facing) * 2.2);
+    await send(1, () => ({ yaw: yawTo(hb.x, hb.z), buttons: Buttons.AttackPressed }));
+    await send(10, () => ({ yaw: yawTo(hb.x, hb.z) }));
+  }
   check(fx.slice(front).some((f) => f.t === "hit" && f.blocked), "the shield blocks frontal hits");
   await send(30 * 5, () => ({}));
 }
 
-// 4. Horizon Break: dive from above onto a wretch.
+// 4. Horizon Break: dive from above onto a wretch (boost and dive unlock at level 2).
+room.send("dev:xp", { amount: 40 });
+await send(10, () => ({}));
 let target: any = null;
 state.enemies.forEach((e: any) => { if (!target && e.kind === "wretch" && e.state !== 6) target = e; });
 if (target) {

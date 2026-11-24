@@ -4,6 +4,7 @@
  * step. Uses test accounts and dev helpers (XP, teleport, boss phase/health).
  * Usage: npx tsx scripts/dungeon-smoke.ts <outDir> [http://localhost:5173/] [browserPath]
  */
+import { BROWSER_ARGS } from "./browser-args.ts";
 import { chromium, type Page } from "playwright-core";
 
 const out = process.argv[2] ?? "shots";
@@ -13,7 +14,7 @@ const tag = Math.random().toString(36).replace(/[^a-z]/g, "").slice(0, 4);
 const errors: string[] = [];
 const check = (ok: boolean, what: string) => { console.log(`${ok ? "✔" : "✖"} ${what}`); if (!ok) errors.push(what); };
 
-const browser = await chromium.launch({ executablePath: exe, headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+const browser = await chromium.launch({ executablePath: exe, headless: true, args: BROWSER_ARGS });
 
 async function player(name: string, cls: string, size = { width: 1280, height: 720 }) {
   const page = await browser.newPage({ viewport: size });

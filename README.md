@@ -48,35 +48,41 @@ npx tsx scripts/combat-smoke.ts <outDir>   # browser: the combat slice, with scr
 npx tsx scripts/dungeon-smoke.ts <outDir>  # two browsers: party panel → gate → Colossus phases → clear → home
 ```
 
-## Environment art (one pack per island)
+## Environment art
 
-Islands are dressed from the free CC0 packs in `Worlds_Edge_Free_3D_Environment_Packs.pdf`, one pack per area:
+Everything you see is a model from the free CC0 packs in `Worlds_Edge_Free_3D_Environment_Packs.pdf` — no plain blocks. The islands, the harbour and the settlement shelf are laid out on a hex grid and built from **KayKit Medieval Hexagon** tiles (grass tops, rock columns down to the sea); First Harbour is a town of KayKit buildings; each isle is dressed with its own pack:
 
 | Area | Pack | Status |
 |---|---|---|
-| First Harbour | Kenney Castle Kit | ✅ |
+| Terrain everywhere, First Harbour's town, clouds | KayKit Medieval Hexagon | ✅ |
+| First Harbour: beacon tower, siege engines | Kenney Castle Kit | ✅ |
+| Docks and lighthouse | Kenney Pirate Kit | ✅ |
+| Ocean route | Kenney Watercraft Kit | ✅ |
 | Wretch isle | Kenney Nature Kit | ✅ |
 | Smuggler's cove | Kenney Pirate Kit | ✅ |
-| Ocean route | Kenney Watercraft Kit | ✅ |
-| Rim settlement | Kenney Modular Cave Kit | ✅ |
-| Colossus arena | Kenney Modular Dungeon Kit (until Quaternius Ultimate Modular Ruins) | ✅ |
+| Rim settlement | Kenney Modular Cave Kit + KayKit buildings and torches | ✅ |
+| Colossus arena | KayKit Dungeon (pillars, plate) + Kenney Modular Dungeon Kit | ✅ |
 | Pinecrest | Quaternius Ultimate Nature | stand-in (Nature Kit pines) |
-| Castaway camp | Quaternius Survival Pack | stand-in (Nature Kit camp) |
+| Castaway camp | Quaternius Survival Pack | stand-in (KayKit camp) |
 | Ember spire | Quaternius Ultimate Stylized Nature | stand-in (Nature Kit autumn) |
-| Farmstead | Quaternius Medieval Village Pack | stand-in (Nature Kit farm) |
-| Darkwood | Quaternius Modular Medieval Buildings | stand-in (Nature Kit dark forest) |
+| Farmstead | Quaternius Medieval Village Pack | stand-in (KayKit farm) |
+| Darkwood | Quaternius Modular Medieval Buildings | stand-in (Nature Kit dark forest, KayKit ruins) |
 | Palm reach | Quaternius Pirate Kit | stand-in (Nature Kit palms) |
-| Wreck spire | Quaternius Ships Pack | stand-in (Nature Kit rocks) |
+| Wreck spire | Quaternius Ships Pack | stand-in (Pirate Kit wreckage) |
 
 ```sh
 npm run fetch-assets   # download packs into .asset-cache/ (git-ignored)
-npm run build-env      # convert the models the layout uses into apps/client/public/env + bounds table
+npm run build-env      # convert what the world places into apps/client/public/env + the model table
+npx tsx scripts/preview-models.ts <pack> [regex]   # then open /preview.html?pack=<pack> to compare models
 ```
 
-- **No plain blocks are drawn.** Every solid block (island bodies, cliffs, ground, buildings, roofs, stairs, docks, walls, the settlement, the arena platforms and the Colossus's body) stays as invisible collision and is drawn with pack models instead (`packages/shared/src/skins.ts`): Nature Kit cliff blocks with rock-face walls and grass ground for terrain; Castle Kit walls, windowed tower sections, roof tops and ground in First Harbour; Pirate Kit docks; Cave Kit floors and walls in the settlement; Dungeon Kit walls in the arena. A skin either stretches one model to fill its block or tiles a model over the block's outer shell, so what you see is what you can stand on.
-- The layout lives in `packages/shared/src/dressing.ts`: per area, groups of models with target sizes, where to place them (island top, shore, open water) and whether they're solid. Placement is seeded, so server and clients agree; solid props (trees, rocks, towers, huts, wrecks) add invisible box colliders, small props are visual only.
-- The client (`apps/client/src/render/dressing.ts`) loads an area's models when you get within ~650 m, converts them to the same cheap lit material as characters, merges each model to one mesh and draws placements as thin instances (one draw call per model per area). Areas stop drawing deep in the fog.
-- Quaternius packs come from Google Drive, which refused them with "download quota exceeded" — re-run `npm run fetch-assets` later (it resumes), then `npm run build-env`; their islands switch from stand-ins automatically. The itch.io packs (KayKit, Quaternius MegaKits) need a browser download: extract into `.asset-cache/<pack-id>/` and add the pack to an area in `dressing.ts`.
+- **Terrain** (`packages/shared/src/hex.ts`): cells are KayKit hex tiles, pointy along z. Each cell is a grass tile on a stretched stone column; collision is one brick per cell (bricks of neighbouring rows interlock exactly) merged into runs, so what you see is what you stand on, to within a metre at the zigzag edges. Isle tops are flat for fights, with broken ledges around their rims.
+- **Layout** (`packages/shared/src/world.ts`): the harbour town (buildings on a jittered grid facing the plaza, training yard with walls, shrine, terrace stairs, beacon, docks), the isles (hex pillars, shards, peaks), the rim (rocks along the lip, a sea of cloud below) and the settlement shelf. Gameplay spots keep their old coordinates (spawn, shrine, stairs, beacon, docks, isles, gate). Props per area are scattered by `packages/shared/src/dressing.ts` (island top, cliff edge, shallows, open water), seeded so the server and clients agree.
+- **Colliders follow the models.** The asset build stores a 4×4 height profile for every model; buildings, towers, peaks and walls get stepped colliders from it (land on roofs and towers), trees get a trunk, rocks a box.
+- **Colour.** The build recolours the Kenney Nature Kit's turquoise palette to match KayKit and remaps KayKit's grass and cliff swatches, so the packs sit together.
+- **Rendering** (`apps/client/src/render/dressing.ts`): one merged mesh per model per area, drawn as thin instances with a slight colour variation per instance; terrain and landmarks load at once, props within ~650 m. Clouds drift and boats ride the swell.
+- **Atmosphere** (`render/atmosphere.ts`, `render/ambience.ts`, ocean shader): sun shadows around the camera on medium/high (dropped automatically if the frame rate can't hold), a light colour grade, turquoise shallows and surf around every coast, sun glints, the beacon's fire and smoke, shrine motes, torch flames, and spray where the sea pours over the rim. Low quality skips shadows and grading.
+- Quaternius packs come from Google Drive, which refused them with "download quota exceeded" — re-run `npm run fetch-assets` later, then `npm run build-env`; their isles switch from stand-ins automatically. KayKit Medieval Hexagon and Dungeon come from KayKit's official GitHub repositories (extracted into `.asset-cache/kaykit-medieval-hexagon` and `.asset-cache/kaykit-dungeon`); the other itch.io packs need a browser download.
 - Credits: `apps/client/public/env/CREDITS.md`.
 
 ## How it fits together
@@ -95,8 +101,8 @@ apps/client       Babylon.js renderer, input, camera, HUD, menus; predicts the l
 
 - **Prediction.** The client applies its inputs immediately using `stepMovement`, sends them, and when the server's state arrives the Colyseus reconciler rewinds to it and replays unacknowledged inputs. Because both sides run identical code, corrections are normally zero.
 - **Remote players** render ~100 ms in the past, interpolated between server snapshots.
-- **World geometry** is generated deterministically from a seed in `packages/shared/src/world.ts`, so server collision and client rendering always match. Everything solid is an axis-aligned box.
-- **Low-end rendering.** The whole static world is one mesh with lighting baked into vertex colours and a hand-written unlit shader (one draw call). The ocean is a camera-following grid with a vertex-wave shader. Resolution scales down automatically when the frame rate drops.
+- **World geometry** is generated deterministically in `packages/shared/src/world.ts`, so server collision and client rendering always match. Collision is axis-aligned boxes (invisible); everything drawn is a pack model.
+- **Low-end rendering.** Each model is one draw call per area (thin instances). The ocean is a camera-following grid with a vertex-wave shader. When the frame rate drops, shadows go first, then the resolution scales down. `?quality=low` skips shadows and post-processing.
 
 ## Deploy
 
@@ -121,4 +127,4 @@ Put Caddy in front for TLS (`deploy/Caddyfile`); browsers on an https page can o
 
 ## Status
 
-The design document carries a full done / left checklist (section "Build status"). In short, still to build: the class signature mechanics other than the Lancer's Horizon Break, signature techniques, ultimates, the harder dungeon version, gear and currencies, chat and pings, and real art. Characters and monsters are box-built placeholders; real models come from Blender as glTF on the shared rig.
+The design document carries a full done / left checklist (section "Build status"). In short, still to build: the class signature mechanics other than the Lancer's Horizon Break, signature techniques, ultimates, the harder dungeon version, gear and currencies, chat and pings, and real art. Characters are box-built placeholders (real models come from Blender as glTF on the shared rig); monsters use the CC0 monster models in `apps/client/public/monsters`.

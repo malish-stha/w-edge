@@ -3,6 +3,7 @@
  * and saves a screenshot. Needs the dev server + client running.
  * Usage: npx tsx scripts/env-tour.ts <outDir> [http://localhost:5173/] [browserPath]
  */
+import { BROWSER_ARGS } from "./browser-args.ts";
 import { chromium } from "playwright-core";
 
 const out = process.argv[2] ?? "shots";
@@ -11,7 +12,7 @@ const exe = process.argv[4] ?? "C:/Program Files (x86)/Microsoft/Edge/Applicatio
 const tag = Math.random().toString(36).replace(/[^a-z]/g, "").slice(0, 4);
 const errors: string[] = [];
 
-const browser = await chromium.launch({ executablePath: exe, headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+const browser = await chromium.launch({ executablePath: exe, headless: true, args: BROWSER_ARGS });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 page.on("console", (m) => { if (m.type() === "error" && !m.text().includes("GL Driver")) errors.push(m.text()); });
 page.on("pageerror", (e) => errors.push(String(e)));

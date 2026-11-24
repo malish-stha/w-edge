@@ -88,7 +88,16 @@ export class Hud {
     this.notices.replaceChildren();
   }
 
-  toggleHelp() { this.help.hidden = !this.help.hidden; }
+  /** Show or hide the controls panel; the choice is remembered for next time. */
+  toggleHelp() {
+    this.help.hidden = !this.help.hidden;
+    try { localStorage.setItem("we.help", this.help.hidden ? "hidden" : "shown"); } catch { /* private mode */ }
+  }
+
+  /** Returning players who put the controls away don't get them back every session. */
+  restoreHelp() {
+    try { if (localStorage.getItem("we.help") === "hidden") this.help.hidden = true; } catch { /* private mode */ }
+  }
   toggleDebug() { this.debug.hidden = !this.debug.hidden; }
   get debugVisible() { return !this.debug.hidden; }
 

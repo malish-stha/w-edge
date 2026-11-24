@@ -6,10 +6,11 @@
  *   npx tsx scripts/fetch-assets.ts            # all packs
  *   npx tsx scripts/fetch-assets.ts kenney-nature-kit
  *
- * Sources: Kenney (signed link from the "continue without donating" endpoint) and
- * Quaternius (public Google Drive folders). itch.io-only packs (KayKit, Quaternius
- * MegaKits) need a manual browser download: put the extracted folder in
- * .asset-cache/<pack>/ and the build step will find it.
+ * Sources: Kenney (signed link from the "continue without donating" endpoint),
+ * KayKit (official GitHub repositories) and Quaternius (public Google Drive
+ * folders). itch.io-only packs (the other KayKit packs, Quaternius MegaKits) need
+ * a manual browser download: put the extracted folder in .asset-cache/<pack>/
+ * and the build step will find it.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -20,6 +21,7 @@ const UA = "Mozilla/5.0 (asset fetch for a CC0 pack)";
 
 type Pack =
   | { id: string; kind: "kenney"; slug: string }
+  | { id: string; kind: "github"; repo: string; branch: string }
   | { id: string; kind: "drive"; folder: string; /** Subfolder with models, in order of preference. */ formats: string[] };
 
 export const PACKS: Pack[] = [
@@ -29,6 +31,9 @@ export const PACKS: Pack[] = [
   { id: "kenney-watercraft-kit", kind: "kenney", slug: "watercraft-kit" },
   { id: "kenney-modular-cave-kit", kind: "kenney", slug: "modular-cave-kit" },
   { id: "kenney-modular-dungeon-kit", kind: "kenney", slug: "modular-dungeon-kit" },
+  // KayKit publishes the free editions of these on GitHub as well as itch.io.
+  { id: "kaykit-medieval-hexagon", kind: "github", repo: "KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0", branch: "main" },
+  { id: "kaykit-dungeon", kind: "github", repo: "KayKit-Game-Assets/KayKit-Dungeon-Remastered-1.0", branch: "main" },
   { id: "quaternius-medieval-village", kind: "drive", folder: "18T92VcNldHG0ugWo1u0hSJGDLua-n7o5", formats: ["glTF", "OBJ"] },
   { id: "quaternius-modular-medieval-buildings", kind: "drive", folder: "1WCmnrS1fYQLYfRwztVErgAOyWXdJiVIo", formats: ["glTF", "OBJ"] },
   { id: "quaternius-ultimate-nature", kind: "drive", folder: "1-Kl0L_Jg8awbh0S5T-z3zxh4mVlnxTpa", formats: ["glTF", "OBJ"] },
@@ -58,6 +63,12 @@ async function fetchKenney(slug: string, dir: string) {
   if (!link.url) throw new Error(`no download link for ${slug}`);
   const zip = join(CACHE, `${slug}.zip`);
   await download(link.url, zip);
+  execFileSync("unzip", ["-q", "-o", zip, "-d", dir]);
+}
+
+async function fetchGithub(repo: string, branch: string, dir: string) {
+  const zip = join(CACHE, `${repo.split("/")[1]}.zip`);
+  await download(`https://codeload.github.com/${repo}/zip/refs/heads/${branch}`, zip);
   execFileSync("unzip", ["-q", "-o", zip, "-d", dir]);
 }
 
@@ -132,6 +143,7 @@ for (const pack of PACKS) {
   mkdirSync(dir, { recursive: true });
   try {
     if (pack.kind === "kenney") await fetchKenney(pack.slug, dir);
+    else if (pack.kind === "github") await fetchGithub(pack.repo, pack.branch, dir);
     else await fetchDrive(pack.folder, pack.formats, dir);
     writeFileSync(join(dir, ".done"), new Date().toISOString());
     console.log(`✔ ${pack.id}`);
